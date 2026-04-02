@@ -1,0 +1,24 @@
+[project]
+name = "companion-mcp"
+version = "0.1.0"
+description = "MCP server for Bitfocus Companion — button control, styling, and show programming"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [{name = "Drohi", email = "info@ecube-entertainment.com"}]
+dependencies = [
+  "mcp>=1.0",
+  "httpx>=0.28",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/companion_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.3",
+]
