@@ -13,7 +13,7 @@
 
 An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 53 tools covering verified button control, styling, page discovery, runtime summaries, inventory diffing, checkpointed rollback/restore workflows, preset management, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
 
-Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
+Built for live production. Pairs with [grandMA2 MCP](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), [MADRIX MCP](https://github.com/drohi-r/madrix-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
 The repo also includes a lightweight local browser UI for humans who want the same verified flows without manually issuing MCP tool calls.
 
@@ -63,6 +63,29 @@ Make sure Companion is running on the target host and port. Current Companion bu
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
 | `COMPANION_UI_HOST` | `127.0.0.1` | Browser UI bind address |
 | `COMPANION_UI_PORT` | `8088` | Browser UI port |
+
+## Architecture
+
+```mermaid
+graph TD
+    A["Companion MCP Server<br/><code>companion_mcp</code><br/>53 tools · safety gate"] --> B
+    B["HTTP Client<br/>Button actions · style writes"] --> D
+    A --> C
+    C["WebSocket tRPC Client<br/>Discovery · preview · variables"] --> D
+    D["Bitfocus Companion<br/>HTTP + WebSocket at /trpc"]
+
+    E["Browser UI<br/><code>companion-mcp-ui</code><br/>Local operator console"] -.-> A
+    F["Snapshot Engine<br/>Inventory · presets · rollback"] -.-> A
+    G["Verification Layer<br/>Render polling · diff · transactions"] -.-> A
+
+    style A fill:#1a1a2e,stroke:#14B8A6,color:#fff
+    style B fill:#1a1a2e,stroke:#14B8A6,color:#fff
+    style C fill:#1a1a2e,stroke:#14B8A6,color:#fff
+    style D fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style E fill:#0f3460,stroke:#0f3460,color:#fff
+    style F fill:#0f3460,stroke:#0f3460,color:#fff
+    style G fill:#0f3460,stroke:#0f3460,color:#fff
+```
 
 ## Tools
 
@@ -162,7 +185,7 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
   "mcpServers": {
     "companion": {
       "command": "uv",
-      "args": ["run", "python", "-m", "companion_mcp"],
+      "args": ["run", "--directory", "/path/to/companion-mcp", "python", "-m", "companion_mcp"],
       "env": {
         "COMPANION_HOST": "127.0.0.1",
         "COMPANION_PORT": "8000"
@@ -179,7 +202,7 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
   "servers": {
     "companion": {
       "command": "uv",
-      "args": ["run", "python", "-m", "companion_mcp"],
+      "args": ["run", "--directory", "/path/to/companion-mcp", "python", "-m", "companion_mcp"],
       "env": {
         "COMPANION_HOST": "127.0.0.1",
         "COMPANION_PORT": "8000"
