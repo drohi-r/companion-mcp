@@ -285,6 +285,37 @@ def _diff_inventory(before_buttons: list[dict[str, Any]], after_buttons: list[di
     }
 
 
+def _restore_entries_from_inventory(inventory: dict[str, Any]) -> list[dict[str, Any]]:
+    buttons = inventory.get("buttons")
+    if not isinstance(buttons, list):
+        raise ValueError("inventory_json must include a buttons array.")
+    entries: list[dict[str, Any]] = []
+    for button in buttons:
+        if not isinstance(button, dict):
+            raise ValueError("Each inventory button entry must be an object.")
+        row = button.get("row")
+        column = button.get("column")
+        if not isinstance(row, int) or not isinstance(column, int):
+            raise ValueError("Each inventory button entry must include integer row and column values.")
+        style_meta = button.get("style_meta")
+        if not isinstance(style_meta, dict):
+            continue
+        entry: dict[str, Any] = {"row": row, "column": column}
+        for key in ("text", "size"):
+            value = style_meta.get(key)
+            if value not in (None, ""):
+                entry[key] = value
+        for key in ("color", "bgcolor"):
+            value = style_meta.get(key)
+            if isinstance(value, int):
+                entry[key] = f"{value:06x}"
+            elif isinstance(value, str) and value:
+                entry[key] = value.lstrip("#")
+        if len(entry) > 2:
+            entries.append(entry)
+    return entries
+
+
 async def _poll_button_info(
     client: CompanionClient,
     page: int,
@@ -633,6 +664,26 @@ async def diff_page_inventory(before_inventory_json: str, after_inventory_json: 
         "before_page": before.get("page"),
         "after_page": after.get("page"),
         **diff,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def preview_restore_page_style_from_inventory(inventory_json: str) -> str:
+    """Resolve a captured page inventory into restore-style entries without writing to Companion."""
+    inventory = json.loads(inventory_json)
+    if not isinstance(inventory, dict):
+        raise ValueError("inventory_json must be a JSON object.")
+    page = inventory.get("page")
+    if not isinstance(page, int):
+        raise ValueError("inventory_json must include an integer page.")
+    entries = _restore_entries_from_inventory(inventory)
+    return _json({
+        "action": "preview_restore_page_style_from_inventory",
+        "page": page,
+        "count": len(entries),
+        "writes_companion": False,
+        "preview": entries,
     })
 
 
@@ -1048,6 +1099,21 @@ async def set_page_style_verified(page: int, buttons_json: str, wait_ms: int = 5
         "results": results,
         "inventory_diff": diff,
     })
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def restore_page_style_from_inventory(inventory_json: str, wait_ms: int = 500, poll_ms: int = 100) -> str:
+    """Restore button style state from a previously captured page inventory."""
+    inventory = json.loads(inventory_json)
+    if not isinstance(inventory, dict):
+        raise ValueError("inventory_json must be a JSON object.")
+    page = inventory.get("page")
+    if not isinstance(page, int):
+        raise ValueError("inventory_json must include an integer page.")
+    entries = _restore_entries_from_inventory(inventory)
+    return await set_page_style_verified(page, json.dumps(entries), wait_ms=wait_ms, poll_ms=poll_ms)
 
 
 @mcp.tool()

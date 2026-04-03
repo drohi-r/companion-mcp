@@ -374,9 +374,10 @@ class CompanionClient:
         style = config.get("style")
         if not isinstance(style, dict):
             return None
+        size = style.get("size")
         return {
             "text": style.get("text"),
-            "size": style.get("size"),
+            "size": str(size) if size not in (None, "") else size,
             "color": style.get("color"),
             "bgcolor": style.get("bgcolor"),
             "show_topbar": style.get("show_topbar"),

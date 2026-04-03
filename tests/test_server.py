@@ -332,6 +332,30 @@ async def test_diff_page_inventory():
 
 
 @pytest.mark.asyncio
+async def test_preview_restore_page_style_from_inventory():
+    from companion_mcp.server import preview_restore_page_style_from_inventory
+    inventory = json.dumps({
+        "page": 1,
+        "buttons": [
+            {
+                "row": 0,
+                "column": 1,
+                "style_meta": {"text": "GO", "color": 16777215, "bgcolor": 0, "size": "18"},
+            },
+            {
+                "row": 0,
+                "column": 2,
+                "style_meta": None,
+            },
+        ],
+    })
+    result = json.loads(await preview_restore_page_style_from_inventory(inventory))
+    assert result["count"] == 1
+    assert result["preview"][0]["text"] == "GO"
+    assert result["preview"][0]["color"] == "ffffff"
+
+
+@pytest.mark.asyncio
 @patch("companion_mcp.server.get_page_grid")
 async def test_find_buttons(mock_get_page_grid):
     from companion_mcp.server import find_buttons
@@ -410,6 +434,29 @@ async def test_set_page_style_verified(mock_set_button_style_verified, mock_snap
     result = json.loads(await set_page_style_verified(1, json.dumps([{"row": 0, "column": 1, "text": "NEW"}])))
     assert result["count"] == 1
     assert result["inventory_diff"]["changed_count"] == 1
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.set_page_style_verified")
+async def test_restore_page_style_from_inventory(mock_set_page_style_verified):
+    from companion_mcp.server import restore_page_style_from_inventory
+    mock_set_page_style_verified.return_value = json.dumps({"ok": True, "count": 1})
+    inventory = json.dumps({
+        "page": 1,
+        "buttons": [
+            {
+                "row": 0,
+                "column": 1,
+                "style_meta": {"text": "GO", "color": 16777215, "bgcolor": 0},
+            }
+        ],
+    })
+    result = json.loads(await restore_page_style_from_inventory(inventory))
+    assert result["ok"] is True
+    args = mock_set_page_style_verified.await_args
+    assert args.args[0] == 1
+    restore_entries = json.loads(args.args[1])
+    assert restore_entries[0]["text"] == "GO"
 
 
 @pytest.mark.asyncio
