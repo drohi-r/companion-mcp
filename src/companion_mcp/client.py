@@ -344,6 +344,27 @@ class CompanionClient:
             {"location": {"pageNumber": page, "row": row, "column": column}},
         )
 
+    def _preview_meta(self, preview: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(preview, dict):
+            return None
+        image = preview.get("image")
+        if not isinstance(image, str) or "," not in image:
+            return {"isUsed": preview.get("isUsed"), "image_sha256": None, "image_bytes": None}
+        header, encoded = image.split(",", 1)
+        mime = None
+        if header.startswith("data:") and ";base64" in header:
+            mime = header[5:].split(";", 1)[0]
+        try:
+            payload = base64.b64decode(encoded, validate=False)
+        except Exception:
+            return {"isUsed": preview.get("isUsed"), "mime": mime, "image_sha256": None, "image_bytes": None}
+        return {
+            "isUsed": preview.get("isUsed"),
+            "mime": mime,
+            "image_sha256": hashlib.sha256(payload).hexdigest(),
+            "image_bytes": len(payload),
+        }
+
     async def get_button_info_current(self, page: int, row: int, column: int) -> dict[str, Any]:
         pages_result = await self.get_pages_snapshot()
         if not pages_result.get("ok"):
@@ -367,6 +388,7 @@ class CompanionClient:
                     "control_id": None,
                     "exists": False,
                     "preview": preview_result.get("body"),
+                    "preview_meta": self._preview_meta(preview_result.get("body")),
                 },
             }
 
@@ -386,6 +408,7 @@ class CompanionClient:
                 "exists": True,
                 "control": control_result.get("body"),
                 "preview": preview_result.get("body"),
+                "preview_meta": self._preview_meta(preview_result.get("body")),
             },
         }
 
@@ -418,6 +441,7 @@ class CompanionClient:
                         "control_id": control_id,
                         "exists": control_id is not None,
                         "preview": preview_result.get("body") if preview_result.get("ok") else None,
+                        "preview_meta": self._preview_meta(preview_result.get("body")) if preview_result.get("ok") else None,
                         "control": control_result.get("body") if control_result and control_result.get("ok") else None,
                     }
                 )

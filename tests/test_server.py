@@ -60,12 +60,19 @@ async def test_list_surfaces_returns_compat_error_on_404(mock_client_factory):
 async def test_get_button_info(mock_client_factory):
     from companion_mcp.server import get_button_info
     fake = MagicMock()
-    fake.get_button_info_current = AsyncMock(return_value={"ok": True, "body": {"control": {"config": {"text": "GO"}}}})
+    fake.get_button_info_current = AsyncMock(return_value={
+        "ok": True,
+        "body": {
+            "control": {"config": {"text": "GO"}},
+            "preview_meta": {"image_sha256": "abc123", "image_bytes": 42},
+        },
+    })
     mock_client_factory.return_value = fake
 
     result = json.loads(await get_button_info(1, 0, 0))
     assert result["ok"] is True
     assert result["body"]["control"]["config"]["text"] == "GO"
+    assert result["body"]["preview_meta"]["image_sha256"] == "abc123"
 
 
 @pytest.mark.asyncio
@@ -79,6 +86,22 @@ async def test_get_button_info_returns_compat_error_on_404(mock_client_factory):
     result = json.loads(await get_button_info(1, 0, 0))
     assert result["blocked"] is True
     assert result["compatibility"] == "current_companion_version"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_verify_button_render_change(mock_client_factory):
+    from companion_mcp.server import verify_button_render_change
+    fake = MagicMock()
+    fake.get_button_info_current = AsyncMock(return_value={
+        "ok": True,
+        "body": {"preview_meta": {"image_sha256": "newhash", "image_bytes": 123}},
+    })
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await verify_button_render_change(1, 0, 0, "oldhash"))
+    assert result["changed"] is True
+    assert result["current_sha256"] == "newhash"
 
 
 @pytest.mark.asyncio

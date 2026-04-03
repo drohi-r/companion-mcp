@@ -236,7 +236,7 @@ async def list_surfaces() -> str:
 @mcp.tool()
 @_handle_errors
 async def get_button_info(page: int, row: int, column: int) -> str:
-    """Fetch the raw API payload for a Companion button location."""
+    """Fetch the current control state and rendered preview metadata for a Companion button location."""
     _validate_button_coords(page, row, column)
     result = await _client().get_button_info_current(page, row, column)
     if not result.get("ok") and result.get("error_code") == "NOT_FOUND":
@@ -246,6 +246,35 @@ async def get_button_info(page: int, row: int, column: int) -> str:
             error=result.get("error"),
         )
     return _json(result)
+
+
+@mcp.tool()
+@_handle_errors
+async def verify_button_render_change(page: int, row: int, column: int, previous_sha256: str) -> str:
+    """Compare the current button preview fingerprint to a previous preview hash."""
+    _validate_button_coords(page, row, column)
+    result = await _client().get_button_info_current(page, row, column)
+    if not result.get("ok"):
+        if result.get("error_code") == "NOT_FOUND":
+            return _compat_error(
+                "This Companion build does not expose the expected control inspection tRPC procedure.",
+                path=result.get("path"),
+                error=result.get("error"),
+            )
+        return _json(result)
+
+    preview_meta = result.get("body", {}).get("preview_meta") or {}
+    current_sha = preview_meta.get("image_sha256")
+    return _json({
+        "ok": True,
+        "page": page,
+        "row": row,
+        "column": column,
+        "previous_sha256": previous_sha256,
+        "current_sha256": current_sha,
+        "changed": bool(current_sha and previous_sha256 and current_sha != previous_sha256),
+        "preview_meta": preview_meta,
+    })
 
 
 @mcp.tool()
