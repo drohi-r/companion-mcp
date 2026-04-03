@@ -65,6 +65,7 @@ async def test_get_button_info(mock_client_factory):
         "body": {
             "control": {"config": {"text": "GO"}},
             "style_meta": {"text": "GO", "color": 1, "bgcolor": 2},
+            "feedback_meta": {"count": 1, "active_style_feedbacks": 1, "style_may_be_feedback_controlled": True},
             "preview_meta": {"image_sha256": "abc123", "image_bytes": 42},
         },
     })
@@ -74,6 +75,7 @@ async def test_get_button_info(mock_client_factory):
     assert result["ok"] is True
     assert result["body"]["control"]["config"]["text"] == "GO"
     assert result["body"]["style_meta"]["text"] == "GO"
+    assert result["body"]["feedback_meta"]["style_may_be_feedback_controlled"] is True
     assert result["body"]["preview_meta"]["image_sha256"] == "abc123"
 
 
@@ -117,6 +119,7 @@ async def test_set_button_style_verified(mock_client_factory):
             "body": {
                 "control": {"config": {"type": "button"}},
                 "style_meta": {"text": "OLD", "color": 1, "bgcolor": 2},
+                "feedback_meta": {"count": 0, "active_style_feedbacks": 0, "style_may_be_feedback_controlled": False},
                 "preview_meta": {"image_sha256": "before"},
             },
         },
@@ -125,6 +128,7 @@ async def test_set_button_style_verified(mock_client_factory):
             "body": {
                 "control": {"config": {"type": "button"}},
                 "style_meta": {"text": "NEW", "color": 3, "bgcolor": 4},
+                "feedback_meta": {"count": 2, "active_style_feedbacks": 1, "style_may_be_feedback_controlled": True},
                 "preview_meta": {"image_sha256": "after"},
             },
         },
@@ -137,6 +141,8 @@ async def test_set_button_style_verified(mock_client_factory):
     assert result["render_changed"] is True
     assert result["style_changed"] is True
     assert result["control_type"] == "button"
+    assert result["style_may_be_feedback_controlled"] is True
+    assert result["feedback_summary"]["active_style_feedbacks"] == 1
     fake.set_style.assert_awaited_once_with(1, 0, 1, text="NEW", color="ffffff", bgcolor="0057ff")
 
 

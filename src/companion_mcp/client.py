@@ -384,6 +384,40 @@ class CompanionClient:
             "pngalignment": style.get("pngalignment"),
         }
 
+    def _feedback_meta(self, control: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(control, dict):
+            return None
+        feedbacks = control.get("feedbacks")
+        if not isinstance(feedbacks, list):
+            return {"count": 0, "active_style_feedbacks": 0, "items": [], "style_may_be_feedback_controlled": False}
+
+        items: list[dict[str, Any]] = []
+        active_style_feedbacks = 0
+        for feedback in feedbacks:
+            if not isinstance(feedback, dict):
+                continue
+            style = feedback.get("style")
+            has_style = isinstance(style, dict) and any(
+                style.get(key) is not None for key in ("text", "color", "bgcolor", "png64")
+            )
+            if has_style:
+                active_style_feedbacks += 1
+            items.append({
+                "id": feedback.get("id"),
+                "connectionId": feedback.get("connectionId"),
+                "definitionId": feedback.get("definitionId"),
+                "has_style": has_style,
+                "style_keys": sorted(style.keys()) if isinstance(style, dict) else [],
+                "isInverted": feedback.get("isInverted"),
+            })
+
+        return {
+            "count": len(items),
+            "active_style_feedbacks": active_style_feedbacks,
+            "items": items,
+            "style_may_be_feedback_controlled": active_style_feedbacks > 0,
+        }
+
     async def get_button_info_current(self, page: int, row: int, column: int) -> dict[str, Any]:
         pages_result = await self.get_pages_snapshot()
         if not pages_result.get("ok"):
@@ -428,6 +462,7 @@ class CompanionClient:
                 "exists": True,
                 "control": control_body,
                 "style_meta": self._style_meta(control_body),
+                "feedback_meta": self._feedback_meta(control_body),
                 "preview": preview_result.get("body"),
                 "preview_meta": self._preview_meta(preview_result.get("body")),
             },
@@ -466,6 +501,7 @@ class CompanionClient:
                         "preview_meta": self._preview_meta(preview_result.get("body")) if preview_result.get("ok") else None,
                         "control": control_body,
                         "style_meta": self._style_meta(control_body),
+                        "feedback_meta": self._feedback_meta(control_body),
                     }
                 )
 

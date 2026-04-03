@@ -323,6 +323,7 @@ async def set_button_style_verified(
     after_control = (after_body.get("control") or {}).get("config") or {}
     before_style = before_body.get("style_meta")
     after_style = after_body.get("style_meta")
+    after_feedback = after_body.get("feedback_meta") or {}
 
     return _json({
         "ok": bool(write_result.get("ok")) and after.get("ok", False),
@@ -334,12 +335,15 @@ async def set_button_style_verified(
         "write_result": write_result,
         "render_changed": before_preview.get("image_sha256") != after_preview.get("image_sha256"),
         "style_changed": before_style != after_style,
+        "style_may_be_feedback_controlled": after_feedback.get("style_may_be_feedback_controlled", False),
+        "feedback_summary": after_feedback,
         "before": {
             "style_meta": before_style,
             "preview_meta": before_preview,
         },
         "after": {
             "style_meta": after_style,
+            "feedback_meta": after_feedback,
             "preview_meta": after_preview,
         },
     })
