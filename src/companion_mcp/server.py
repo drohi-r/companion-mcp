@@ -105,6 +105,13 @@ def _validate_delay_ms(delay_ms: int) -> None:
         raise ValueError("delay_ms must be <= 60000")
 
 
+def _validate_poll_ms(value: int, field: str) -> None:
+    if value < 0:
+        raise ValueError(f"{field} must be >= 0")
+    if value > 10_000:
+        raise ValueError(f"{field} must be <= 10000")
+
+
 def _validate_hex_color(value: str, field: str) -> None:
     if not value:
         return
@@ -289,11 +296,17 @@ async def set_button_style_verified(
     color: str = "",
     bgcolor: str = "",
     size: str = "",
+    wait_ms: int = 500,
+    poll_ms: int = 100,
 ) -> str:
     """Apply button style changes and verify whether the rendered button output actually changed."""
     _validate_button_coords(page, row, column)
     _validate_hex_color(color, "color")
     _validate_hex_color(bgcolor, "bgcolor")
+    _validate_poll_ms(wait_ms, "wait_ms")
+    _validate_poll_ms(poll_ms, "poll_ms")
+    if wait_ms and poll_ms == 0:
+        raise ValueError("poll_ms must be > 0 when wait_ms is non-zero.")
     style = _normalize_style_payload({"text": text, "color": color, "bgcolor": bgcolor, "size": size})
     if not style:
         raise ValueError("At least one style field must be provided.")
@@ -315,6 +328,21 @@ async def set_button_style_verified(
             "after": after,
         })
 
+    before_preview_sha = ((before.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
+    polls = 1
+    if before_preview_sha and wait_ms > 0:
+        elapsed = 0
+        while elapsed < wait_ms:
+            current_preview_sha = ((after.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
+            if current_preview_sha and current_preview_sha != before_preview_sha:
+                break
+            await asyncio.sleep(poll_ms / 1000)
+            elapsed += poll_ms
+            polls += 1
+            after = await client.get_button_info_current(page, row, column)
+            if not after.get("ok"):
+                break
+
     before_body = before.get("body", {})
     after_body = after.get("body", {})
     before_preview = before_body.get("preview_meta") or {}
@@ -333,6 +361,9 @@ async def set_button_style_verified(
         "applied_style": style,
         "control_type": after_control.get("type"),
         "write_result": write_result,
+        "wait_ms": wait_ms,
+        "poll_ms": poll_ms,
+        "polls": polls,
         "render_changed": before_preview.get("image_sha256") != after_preview.get("image_sha256"),
         "style_changed": before_style != after_style,
         "style_may_be_feedback_controlled": after_feedback.get("style_may_be_feedback_controlled", False),

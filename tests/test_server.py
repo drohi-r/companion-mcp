@@ -148,6 +148,56 @@ async def test_set_button_style_verified(mock_client_factory):
 
 @pytest.mark.asyncio
 @patch("companion_mcp.server._client")
+async def test_set_button_style_verified_polls_until_render_changes(mock_client_factory):
+    from companion_mcp.server import set_button_style_verified
+    fake = MagicMock()
+    fake.get_button_info_current = AsyncMock(side_effect=[
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}},
+                "style_meta": {"text": "OLD"},
+                "feedback_meta": {"count": 0, "active_style_feedbacks": 0, "style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "before"},
+            },
+        },
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}},
+                "style_meta": {"text": "NEW"},
+                "feedback_meta": {"count": 0, "active_style_feedbacks": 0, "style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "before"},
+            },
+        },
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}},
+                "style_meta": {"text": "NEW"},
+                "feedback_meta": {"count": 0, "active_style_feedbacks": 0, "style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "after"},
+            },
+        },
+    ])
+    fake.set_style = AsyncMock(return_value={"ok": True, "status_code": 200})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await set_button_style_verified(1, 0, 1, text="NEW", wait_ms=200, poll_ms=100))
+    assert result["render_changed"] is True
+    assert result["polls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_set_button_style_verified_rejects_bad_poll_combo():
+    from companion_mcp.server import set_button_style_verified
+    result = json.loads(await set_button_style_verified(1, 0, 1, text="NEW", wait_ms=100, poll_ms=0))
+    assert result["blocked"] is True
+    assert "poll_ms must be > 0" in result["error"]
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
 async def test_get_page_grid(mock_client_factory):
     from companion_mcp.server import get_page_grid
     fake = MagicMock()
