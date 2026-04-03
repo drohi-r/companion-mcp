@@ -177,6 +177,50 @@ def _button_runtime_summary(button: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _button_integration_summary(button: dict[str, Any]) -> dict[str, Any]:
+    control = button.get("control") or {}
+    feedback_meta = button.get("feedback_meta") or {}
+    feedback_items = feedback_meta.get("items") or []
+    config = control.get("config") or {}
+    steps = control.get("steps") or {}
+
+    connection_ids: set[str] = set()
+    definition_ids: set[str] = set()
+    for item in feedback_items:
+        connection_id = item.get("connectionId")
+        definition_id = item.get("definitionId")
+        if connection_id:
+            connection_ids.add(str(connection_id))
+        if definition_id:
+            definition_ids.add(str(definition_id))
+
+    if isinstance(steps, dict):
+        for step in steps.values():
+            if not isinstance(step, dict):
+                continue
+            action_sets = step.get("action_sets") or {}
+            if not isinstance(action_sets, dict):
+                continue
+            for actions in action_sets.values():
+                if not isinstance(actions, list):
+                    continue
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    connection_id = action.get("connectionId")
+                    definition_id = action.get("definitionId")
+                    if connection_id:
+                        connection_ids.add(str(connection_id))
+                    if definition_id:
+                        definition_ids.add(str(definition_id))
+
+    return {
+        "connection_ids": sorted(connection_ids),
+        "definition_ids": sorted(definition_ids),
+        "config_type": config.get("type"),
+    }
+
+
 def _summarize_button(button: dict[str, Any]) -> dict[str, Any]:
     control = button.get("control") or {}
     config = control.get("config") or {}
@@ -189,8 +233,55 @@ def _summarize_button(button: dict[str, Any]) -> dict[str, Any]:
         "control_type": config.get("type"),
         "style_meta": button.get("style_meta"),
         "feedback_meta": button.get("feedback_meta"),
+        "integration_summary": _button_integration_summary(button),
         "runtime_summary": _button_runtime_summary(button),
         "preview_meta": button.get("preview_meta"),
+    }
+
+
+def _button_key(button: dict[str, Any]) -> tuple[int | None, int | None]:
+    return (button.get("row"), button.get("column"))
+
+
+def _diff_inventory(before_buttons: list[dict[str, Any]], after_buttons: list[dict[str, Any]]) -> dict[str, Any]:
+    before_map = {_button_key(button): button for button in before_buttons}
+    after_map = {_button_key(button): button for button in after_buttons}
+    keys = sorted(set(before_map) | set(after_map))
+    added: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    unchanged = 0
+
+    for key in keys:
+        before = before_map.get(key)
+        after = after_map.get(key)
+        if before is None and after is not None:
+            added.append(after)
+            continue
+        if after is None and before is not None:
+            removed.append(before)
+            continue
+        if before == after:
+            unchanged += 1
+            continue
+        changed.append({
+            "row": key[0],
+            "column": key[1],
+            "before": before,
+            "after": after,
+            "render_changed": ((before or {}).get("preview_meta") or {}).get("image_sha256") != ((after or {}).get("preview_meta") or {}).get("image_sha256"),
+            "style_changed": (before or {}).get("style_meta") != (after or {}).get("style_meta"),
+            "runtime_changed": (before or {}).get("runtime_summary") != (after or {}).get("runtime_summary"),
+        })
+
+    return {
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
+        "unchanged_count": unchanged,
+        "added": added,
+        "removed": removed,
+        "changed": changed,
     }
 
 
@@ -527,6 +618,26 @@ async def snapshot_page_inventory(page: int, rows: int = 4, columns: int = 8, in
 
 @mcp.tool()
 @_handle_errors
+async def diff_page_inventory(before_inventory_json: str, after_inventory_json: str) -> str:
+    """Compare two page inventory snapshots and summarize added, removed, and changed buttons."""
+    before = json.loads(before_inventory_json)
+    after = json.loads(after_inventory_json)
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise ValueError("Both inventory payloads must be JSON objects.")
+    before_buttons = before.get("buttons")
+    after_buttons = after.get("buttons")
+    if not isinstance(before_buttons, list) or not isinstance(after_buttons, list):
+        raise ValueError("Both inventory payloads must include a buttons array.")
+    diff = _diff_inventory(before_buttons, after_buttons)
+    return _json({
+        "before_page": before.get("page"),
+        "after_page": after.get("page"),
+        **diff,
+    })
+
+
+@mcp.tool()
+@_handle_errors
 async def find_buttons(
     query: str = "",
     page: int = 1,
@@ -534,20 +645,27 @@ async def find_buttons(
     columns: int = 8,
     include_empty: bool = False,
     control_type: str = "",
+    connection_id: str = "",
+    definition_id: str = "",
 ) -> str:
-    """Find buttons by text, control id, or control type within a page region."""
+    """Find buttons by text, control id, control type, or integration metadata within a page region."""
     raw = json.loads(await get_page_grid(page, rows=rows, columns=columns, include_empty=include_empty))
     needle = query.strip().lower()
     type_filter = control_type.strip().lower()
+    connection_filter = connection_id.strip().lower()
+    definition_filter = definition_id.strip().lower()
     matches = []
     for button in raw.get("buttons", []):
         summary = _summarize_button(button)
+        integration_summary = summary.get("integration_summary") or {}
         haystack = " ".join(
             str(value)
             for value in [
                 summary.get("control_id"),
                 (summary.get("style_meta") or {}).get("text"),
                 summary.get("control_type"),
+                " ".join(integration_summary.get("connection_ids") or []),
+                " ".join(integration_summary.get("definition_ids") or []),
             ]
             if value not in (None, "")
         ).lower()
@@ -556,6 +674,12 @@ async def find_buttons(
             continue
         if type_filter and button_type != type_filter:
             continue
+        connection_ids = [value.lower() for value in integration_summary.get("connection_ids") or []]
+        definition_ids = [value.lower() for value in integration_summary.get("definition_ids") or []]
+        if connection_filter and connection_filter not in connection_ids:
+            continue
+        if definition_filter and definition_filter not in definition_ids:
+            continue
         matches.append(summary)
     return _json({
         "page": page,
@@ -563,6 +687,8 @@ async def find_buttons(
         "columns": columns,
         "query": query,
         "control_type": control_type,
+        "connection_id": connection_id,
+        "definition_id": definition_id,
         "count": len(matches),
         "matches": matches,
     })
@@ -875,6 +1001,53 @@ async def set_page_style(page: int, buttons_json: str) -> str:
         results.append({"button": {"page": page, "row": btn["row"], "column": btn["column"]}, "result": result})
 
     return _json({"action": "set_page_style", "page": page, "count": len(results), "results": results})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def set_page_style_verified(page: int, buttons_json: str, wait_ms: int = 500, poll_ms: int = 100) -> str:
+    """Batch-set styles on a page and return verified per-button outcomes plus an inventory diff."""
+    _validate_page(page)
+    _validate_poll_ms(wait_ms, "wait_ms")
+    _validate_poll_ms(poll_ms, "poll_ms")
+    if wait_ms and poll_ms == 0:
+        raise ValueError("poll_ms must be > 0 when wait_ms is non-zero.")
+    buttons = json.loads(buttons_json)
+    if not isinstance(buttons, list):
+        raise ValueError("buttons_json must be a JSON array.")
+
+    client = _client()
+    before_inventory = json.loads(await snapshot_page_inventory(page, include_empty=False))
+    results: list[dict[str, Any]] = []
+    for btn in buttons:
+        if not isinstance(btn, dict) or "row" not in btn or "column" not in btn:
+            raise ValueError("Each button must have row and column fields.")
+        _validate_row_column(btn["row"], btn["column"])
+        style = _normalize_style_payload(btn)
+        verified = json.loads(await set_button_style_verified(
+            page,
+            btn["row"],
+            btn["column"],
+            text=str(style.get("text", "")),
+            color=str(style.get("color", "")),
+            bgcolor=str(style.get("bgcolor", "")),
+            size=str(style.get("size", "")),
+            wait_ms=wait_ms,
+            poll_ms=poll_ms,
+        ))
+        results.append(verified)
+    after_inventory = json.loads(await snapshot_page_inventory(page, include_empty=False))
+    diff = _diff_inventory(before_inventory.get("buttons", []), after_inventory.get("buttons", []))
+    return _json({
+        "action": "set_page_style_verified",
+        "page": page,
+        "count": len(results),
+        "wait_ms": wait_ms,
+        "poll_ms": poll_ms,
+        "results": results,
+        "inventory_diff": diff,
+    })
 
 
 @mcp.tool()

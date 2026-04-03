@@ -287,7 +287,11 @@ async def test_snapshot_page_inventory(mock_get_page_grid):
             "column": 1,
             "control_id": "bank:abc",
             "exists": True,
-            "control": {"config": {"type": "button"}, "runtime": {"current_step_id": "1"}},
+            "control": {
+                "config": {"type": "button"},
+                "runtime": {"current_step_id": "1"},
+                "steps": {"0": {"action_sets": {"down": [{"connectionId": "conn-1", "definitionId": "go"}]}}},
+            },
             "style_meta": {"text": "GO"},
             "feedback_meta": {"style_may_be_feedback_controlled": False},
             "preview_meta": {"image_sha256": "abc123", "isUsed": True},
@@ -296,6 +300,35 @@ async def test_snapshot_page_inventory(mock_get_page_grid):
     result = json.loads(await snapshot_page_inventory(1, rows=1, columns=2))
     assert result["button_count"] == 1
     assert result["buttons"][0]["runtime_summary"]["control_type"] == "button"
+    assert result["buttons"][0]["integration_summary"]["connection_ids"] == ["conn-1"]
+
+
+@pytest.mark.asyncio
+async def test_diff_page_inventory():
+    from companion_mcp.server import diff_page_inventory
+    before = json.dumps({
+        "page": 1,
+        "buttons": [{
+            "row": 0,
+            "column": 1,
+            "style_meta": {"text": "OLD"},
+            "runtime_summary": {"control_type": "button"},
+            "preview_meta": {"image_sha256": "before"},
+        }],
+    })
+    after = json.dumps({
+        "page": 1,
+        "buttons": [{
+            "row": 0,
+            "column": 1,
+            "style_meta": {"text": "NEW"},
+            "runtime_summary": {"control_type": "button"},
+            "preview_meta": {"image_sha256": "after"},
+        }],
+    })
+    result = json.loads(await diff_page_inventory(before, after))
+    assert result["changed_count"] == 1
+    assert result["changed"][0]["render_changed"] is True
 
 
 @pytest.mark.asyncio
@@ -310,7 +343,10 @@ async def test_find_buttons(mock_get_page_grid):
                 "column": 1,
                 "control_id": "bank:abc",
                 "exists": True,
-                "control": {"config": {"type": "button"}},
+                "control": {
+                    "config": {"type": "button"},
+                    "steps": {"0": {"action_sets": {"down": [{"connectionId": "conn-1", "definitionId": "go"}]}}},
+                },
                 "style_meta": {"text": "GO"},
                 "feedback_meta": {"style_may_be_feedback_controlled": False},
                 "preview_meta": {"image_sha256": "abc123", "isUsed": True},
@@ -331,6 +367,49 @@ async def test_find_buttons(mock_get_page_grid):
     result = json.loads(await find_buttons(query="go", page=1, rows=1, columns=8))
     assert result["count"] == 1
     assert result["matches"][0]["column"] == 1
+
+    result = json.loads(await find_buttons(page=1, rows=1, columns=8, connection_id="conn-1"))
+    assert result["count"] == 1
+    assert result["matches"][0]["integration_summary"]["definition_ids"] == ["go"]
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.snapshot_page_inventory")
+@patch("companion_mcp.server.set_button_style_verified")
+async def test_set_page_style_verified(mock_set_button_style_verified, mock_snapshot_page_inventory):
+    from companion_mcp.server import set_page_style_verified
+    mock_snapshot_page_inventory.side_effect = [
+        json.dumps({
+            "page": 1,
+            "buttons": [{
+                "row": 0,
+                "column": 1,
+                "style_meta": {"text": "OLD"},
+                "runtime_summary": {"control_type": "button"},
+                "preview_meta": {"image_sha256": "before"},
+            }],
+        }),
+        json.dumps({
+            "page": 1,
+            "buttons": [{
+                "row": 0,
+                "column": 1,
+                "style_meta": {"text": "NEW"},
+                "runtime_summary": {"control_type": "button"},
+                "preview_meta": {"image_sha256": "after"},
+            }],
+        }),
+    ]
+    mock_set_button_style_verified.return_value = json.dumps({
+        "ok": True,
+        "row": 0,
+        "column": 1,
+        "render_changed": True,
+    })
+
+    result = json.loads(await set_page_style_verified(1, json.dumps([{"row": 0, "column": 1, "text": "NEW"}])))
+    assert result["count"] == 1
+    assert result["inventory_diff"]["changed_count"] == 1
 
 
 @pytest.mark.asyncio
