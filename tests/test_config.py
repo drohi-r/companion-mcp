@@ -3,12 +3,14 @@ import pytest
 from unittest.mock import patch
 
 from companion_mcp.config import CompanionConfig, load_config, _parse_port
+from companion_mcp.config import _parse_timeout
 
 
 def test_default_config():
     config = CompanionConfig()
     assert config.host == "127.0.0.1"
     assert config.port == 8000
+    assert config.timeout_s == 10.0
     assert config.base_url == "http://127.0.0.1:8000"
 
 
@@ -40,7 +42,24 @@ def test_load_config_defaults():
 
 
 def test_load_config_from_env():
-    with patch.dict(os.environ, {"COMPANION_HOST": "192.168.1.50", "COMPANION_PORT": "9090"}):
+    with patch.dict(os.environ, {"COMPANION_HOST": "192.168.1.50", "COMPANION_PORT": "9090", "COMPANION_TIMEOUT_S": "2.5"}):
         config = load_config()
     assert config.host == "192.168.1.50"
     assert config.port == 9090
+    assert config.timeout_s == 2.5
+
+
+def test_parse_timeout_valid():
+    assert _parse_timeout("TEST_TIMEOUT", "10.0") == 10.0
+
+
+def test_parse_timeout_rejects_non_numeric():
+    with patch.dict(os.environ, {"TEST_TIMEOUT": "fast"}):
+        with pytest.raises(ValueError, match="not a valid number"):
+            _parse_timeout("TEST_TIMEOUT", "10.0")
+
+
+def test_parse_timeout_rejects_non_positive():
+    with patch.dict(os.environ, {"TEST_TIMEOUT": "0"}):
+        with pytest.raises(ValueError, match="must be > 0"):
+            _parse_timeout("TEST_TIMEOUT", "10.0")

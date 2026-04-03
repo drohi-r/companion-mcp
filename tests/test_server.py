@@ -14,6 +14,45 @@ async def test_get_server_config():
 
 @pytest.mark.asyncio
 @patch("companion_mcp.server._client")
+async def test_health_check(mock_client_factory):
+    from companion_mcp.server import health_check
+    fake = MagicMock()
+    fake.request = AsyncMock(return_value={"ok": True, "status_code": 200, "content_type": "application/json", "body": []})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await health_check())
+    assert result["ok"] is True
+    assert result["probe_path"] == "/api/surfaces"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_list_surfaces(mock_client_factory):
+    from companion_mcp.server import list_surfaces
+    fake = MagicMock()
+    fake.list_surfaces = AsyncMock(return_value={"ok": True, "body": [{"id": "streamdeck-xl"}]})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await list_surfaces())
+    assert result["ok"] is True
+    assert result["body"][0]["id"] == "streamdeck-xl"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_get_button_info(mock_client_factory):
+    from companion_mcp.server import get_button_info
+    fake = MagicMock()
+    fake.get_button = AsyncMock(return_value={"ok": True, "body": {"text": "GO"}})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await get_button_info(1, 0, 0))
+    assert result["ok"] is True
+    assert result["body"]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
 async def test_press_button(mock_client_factory):
     from companion_mcp.server import press_button
     fake = MagicMock()
@@ -67,8 +106,33 @@ async def test_press_button_sequence(mock_client_factory):
 @pytest.mark.asyncio
 async def test_press_button_sequence_rejects_non_array():
     from companion_mcp.server import press_button_sequence
-    with pytest.raises(ValueError, match="JSON array"):
-        await press_button_sequence('{"bad": true}')
+    result = json.loads(await press_button_sequence('{"bad": true}'))
+    assert result["blocked"] is True
+    assert "JSON array" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_press_button_rejects_negative_coordinate():
+    from companion_mcp.server import press_button
+    result = json.loads(await press_button(1, -1, 0))
+    assert result["blocked"] is True
+    assert "row must be >= 0" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_set_button_color_rejects_bad_hex():
+    from companion_mcp.server import set_button_color
+    result = json.loads(await set_button_color(1, 0, 0, color="red"))
+    assert result["blocked"] is True
+    assert "6-digit hex color" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_press_button_sequence_rejects_negative_delay():
+    from companion_mcp.server import press_button_sequence
+    result = json.loads(await press_button_sequence("[]", delay_ms=-1))
+    assert result["blocked"] is True
+    assert "delay_ms must be >= 0" in result["error"]
 
 
 @pytest.mark.asyncio

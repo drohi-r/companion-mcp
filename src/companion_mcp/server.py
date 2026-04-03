@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from functools import wraps
 from typing import Any
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
 from .client import CompanionClient
-from .config import CompanionConfig, load_config
+from .config import load_config
 
 
 mcp = FastMCP(
@@ -36,12 +38,69 @@ def _json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str)
 
 
+def _error(message: str, **extra: Any) -> str:
+    return _json({"ok": False, "error": message, **extra})
+
+
+def _handle_errors(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except json.JSONDecodeError as exc:
+            return _error(f"Invalid JSON input: {exc.msg}", blocked=True)
+        except ValueError as exc:
+            return _error(str(exc), blocked=True)
+        except httpx.HTTPError as exc:
+            return _error("Companion HTTP request failed.", detail=str(exc), blocked=False)
+
+    return wrapper
+
+
+def _validate_page(page: int) -> None:
+    if page < 1:
+        raise ValueError("page must be >= 1")
+
+
+def _validate_row_column(row: int, column: int) -> None:
+    if row < 0:
+        raise ValueError("row must be >= 0")
+    if column < 0:
+        raise ValueError("column must be >= 0")
+
+
+def _validate_button_coords(page: int, row: int, column: int) -> None:
+    _validate_page(page)
+    _validate_row_column(row, column)
+
+
+def _validate_step(step: int) -> None:
+    if step < 0:
+        raise ValueError("step must be >= 0")
+
+
+def _validate_delay_ms(delay_ms: int) -> None:
+    if delay_ms < 0:
+        raise ValueError("delay_ms must be >= 0")
+    if delay_ms > 60_000:
+        raise ValueError("delay_ms must be <= 60000")
+
+
+def _validate_hex_color(value: str, field: str) -> None:
+    if not value:
+        return
+    normalized = value.lstrip("#")
+    if len(normalized) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in normalized):
+        raise ValueError(f"{field} must be a 6-digit hex color")
+
+
 # ============================================================
 # Read Tools
 # ============================================================
 
 
 @mcp.tool()
+@_handle_errors
 async def get_server_config() -> str:
     """Return the current Companion MCP server configuration."""
     config = load_config()
@@ -53,6 +112,7 @@ async def get_server_config() -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def get_custom_variable(name: str) -> str:
     """Get the value of a Companion custom variable."""
     result = await _client().get_variable(f"/api/custom-variable/{name}/value")
@@ -60,9 +120,45 @@ async def get_custom_variable(name: str) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def get_module_variable(connection: str, name: str) -> str:
     """Get a module variable value from a named Companion connection."""
     result = await _client().get_variable(f"/api/variable/{connection}/{name}/value")
+    return _json(result)
+
+
+@mcp.tool()
+@_handle_errors
+async def health_check() -> str:
+    """Probe Companion reachability and return API status details."""
+    config = load_config()
+    result = await _client().request("GET", "/api/surfaces")
+    return _json({
+        "ok": result["ok"],
+        "host": config.host,
+        "port": config.port,
+        "base_url": config.base_url,
+        "probe_path": "/api/surfaces",
+        "status_code": result["status_code"],
+        "content_type": result["content_type"],
+        "body": result["body"],
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def list_surfaces() -> str:
+    """List connected Companion control surfaces."""
+    result = await _client().list_surfaces()
+    return _json(result)
+
+
+@mcp.tool()
+@_handle_errors
+async def get_button_info(page: int, row: int, column: int) -> str:
+    """Fetch the raw API payload for a Companion button location."""
+    _validate_button_coords(page, row, column)
+    result = await _client().get_button(page, row, column)
     return _json(result)
 
 
@@ -72,43 +168,56 @@ async def get_module_variable(connection: str, name: str) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def press_button(page: int, row: int, column: int) -> str:
     """Press and release a button (runs both down and up actions)."""
+    _validate_button_coords(page, row, column)
     result = await _client().button_action(page, row, column, "press")
     return _json(result)
 
 
 @mcp.tool()
+@_handle_errors
 async def hold_button(page: int, row: int, column: int) -> str:
     """Press and hold a button (runs down actions only). Use release_button to let go."""
+    _validate_button_coords(page, row, column)
     result = await _client().button_action(page, row, column, "down")
     return _json(result)
 
 
 @mcp.tool()
+@_handle_errors
 async def release_button(page: int, row: int, column: int) -> str:
     """Release a held button (runs up actions)."""
+    _validate_button_coords(page, row, column)
     result = await _client().button_action(page, row, column, "up")
     return _json(result)
 
 
 @mcp.tool()
+@_handle_errors
 async def rotate_left(page: int, row: int, column: int) -> str:
     """Trigger a left rotation on an encoder button."""
+    _validate_button_coords(page, row, column)
     result = await _client().button_action(page, row, column, "rotate-left")
     return _json(result)
 
 
 @mcp.tool()
+@_handle_errors
 async def rotate_right(page: int, row: int, column: int) -> str:
     """Trigger a right rotation on an encoder button."""
+    _validate_button_coords(page, row, column)
     result = await _client().button_action(page, row, column, "rotate-right")
     return _json(result)
 
 
 @mcp.tool()
+@_handle_errors
 async def set_step(page: int, row: int, column: int, step: int) -> str:
     """Set the current step of a button action sequence."""
+    _validate_button_coords(page, row, column)
+    _validate_step(step)
     result = await _client().request(
         "POST",
         f"/api/location/{page}/{row}/{column}/step",
@@ -123,13 +232,16 @@ async def set_step(page: int, row: int, column: int, step: int) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def set_button_text(page: int, row: int, column: int, text: str) -> str:
     """Change the text displayed on a button."""
+    _validate_button_coords(page, row, column)
     result = await _client().set_style(page, row, column, text=text)
     return _json(result)
 
 
 @mcp.tool()
+@_handle_errors
 async def set_button_color(
     page: int,
     row: int,
@@ -139,6 +251,9 @@ async def set_button_color(
     bgcolor: str = "",
 ) -> str:
     """Change button colors. Use 6-digit hex (e.g. 'ff0000' for red). color=text color, bgcolor=background color."""
+    _validate_button_coords(page, row, column)
+    _validate_hex_color(color, "color")
+    _validate_hex_color(bgcolor, "bgcolor")
     style: dict[str, Any] = {}
     if color:
         style["color"] = color
@@ -149,6 +264,7 @@ async def set_button_color(
 
 
 @mcp.tool()
+@_handle_errors
 async def set_button_style(
     page: int,
     row: int,
@@ -160,6 +276,9 @@ async def set_button_style(
     size: str = "",
 ) -> str:
     """Set multiple button style properties at once. All parameters optional — only provided values are changed."""
+    _validate_button_coords(page, row, column)
+    _validate_hex_color(color, "color")
+    _validate_hex_color(bgcolor, "bgcolor")
     style: dict[str, Any] = {}
     if text:
         style["text"] = text
@@ -179,6 +298,7 @@ async def set_button_style(
 
 
 @mcp.tool()
+@_handle_errors
 async def set_custom_variable(name: str, value: str) -> str:
     """Set the value of a Companion custom variable."""
     result = await _client().set_variable(name, value)
@@ -191,6 +311,7 @@ async def set_custom_variable(name: str, value: str) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def rescan_surfaces() -> str:
     """Rescan for connected USB surfaces (Stream Deck, etc.)."""
     result = await _client().request("POST", "/api/surfaces/rescan")
@@ -203,12 +324,14 @@ async def rescan_surfaces() -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def press_button_sequence(buttons_json: str, delay_ms: int = 100) -> str:
     """Press multiple buttons in sequence with a configurable delay between each.
 
     buttons_json: JSON array of {page, row, column} objects.
     delay_ms: milliseconds to wait between presses (default 100).
     """
+    _validate_delay_ms(delay_ms)
     buttons = json.loads(buttons_json)
     if not isinstance(buttons, list):
         raise ValueError("buttons_json must be a JSON array of {page, row, column} objects.")
@@ -218,6 +341,7 @@ async def press_button_sequence(buttons_json: str, delay_ms: int = 100) -> str:
     for i, btn in enumerate(buttons):
         if not isinstance(btn, dict) or "page" not in btn or "row" not in btn or "column" not in btn:
             raise ValueError(f"Button at index {i} must have page, row, and column fields.")
+        _validate_button_coords(btn["page"], btn["row"], btn["column"])
         result = await client.button_action(btn["page"], btn["row"], btn["column"], "press")
         results.append({"button": btn, "result": result})
         if i < len(buttons) - 1:
@@ -227,11 +351,13 @@ async def press_button_sequence(buttons_json: str, delay_ms: int = 100) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def set_page_style(page: int, buttons_json: str) -> str:
     """Batch-set style on multiple buttons on a page.
 
     buttons_json: JSON array of {row, column, text?, color?, bgcolor?} objects.
     """
+    _validate_page(page)
     buttons = json.loads(buttons_json)
     if not isinstance(buttons, list):
         raise ValueError("buttons_json must be a JSON array.")
@@ -241,6 +367,9 @@ async def set_page_style(page: int, buttons_json: str) -> str:
     for btn in buttons:
         if not isinstance(btn, dict) or "row" not in btn or "column" not in btn:
             raise ValueError("Each button must have row and column fields.")
+        _validate_row_column(btn["row"], btn["column"])
+        _validate_hex_color(str(btn.get("color", "")), "color")
+        _validate_hex_color(str(btn.get("bgcolor", "")), "bgcolor")
         style = {k: v for k, v in btn.items() if k not in ("row", "column") and v}
         result = await client.set_style(page, btn["row"], btn["column"], **style)
         results.append({"button": {"page": page, "row": btn["row"], "column": btn["column"]}, "result": result})
@@ -249,6 +378,7 @@ async def set_page_style(page: int, buttons_json: str) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 async def label_button_grid(page: int, labels_json: str, columns: int = 8) -> str:
     """Label a grid of buttons from a flat list of names.
 
@@ -256,6 +386,9 @@ async def label_button_grid(page: int, labels_json: str, columns: int = 8) -> st
     labels_json: JSON array of strings, e.g. ["GO", "STOP", "", "BLACKOUT"]
     columns: buttons per row (default 8, use 5 for standard Stream Deck).
     """
+    _validate_page(page)
+    if columns <= 0:
+        raise ValueError("columns must be >= 1")
     labels = json.loads(labels_json)
     if not isinstance(labels, list):
         raise ValueError("labels_json must be a JSON array of strings.")
@@ -279,8 +412,12 @@ async def label_button_grid(page: int, labels_json: str, columns: int = 8) -> st
 
 
 @mcp.tool()
+@_handle_errors
 async def press_bank_button(page: int, button: int) -> str:
     """Press a button using the legacy bank API (deprecated but still works). button is 0-indexed."""
+    _validate_page(page)
+    if button < 0:
+        raise ValueError("button must be >= 0")
     result = await _client().request("GET", f"/press/bank/{page}/{button}")
     return _json(result)
 

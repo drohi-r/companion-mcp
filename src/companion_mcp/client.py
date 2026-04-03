@@ -12,6 +12,12 @@ from .config import CompanionConfig
 @dataclass
 class CompanionClient:
     config: CompanionConfig
+    _http_client: httpx.AsyncClient | None = None
+
+    async def _http(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=self.config.timeout_s)
+        return self._http_client
 
     async def request(
         self,
@@ -20,7 +26,6 @@ class CompanionClient:
         *,
         body: Any = None,
         params: dict[str, Any] | None = None,
-        timeout_s: float = 10.0,
     ) -> dict[str, Any]:
         url = f"{self.config.base_url}{path}"
         request_kwargs: dict[str, Any] = {"params": params}
@@ -31,8 +36,8 @@ class CompanionClient:
             else:
                 request_kwargs["json"] = body
 
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            response = await client.request(method.upper(), url, **request_kwargs)
+        client = await self._http()
+        response = await client.request(method.upper(), url, **request_kwargs)
 
         parsed: Any
         content_type = response.headers.get("content-type", "")
@@ -73,3 +78,11 @@ class CompanionClient:
             f"/api/custom-variable/{name}/value",
             body=value,
         )
+
+    async def get_button(self, page: int, row: int, column: int) -> dict[str, Any]:
+        """Read the raw button payload for a location."""
+        return await self.request("GET", f"/api/location/{page}/{row}/{column}")
+
+    async def list_surfaces(self) -> dict[str, Any]:
+        """Return connected control surfaces when the API supports it."""
+        return await self.request("GET", "/api/surfaces")

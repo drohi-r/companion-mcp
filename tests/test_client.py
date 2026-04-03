@@ -7,7 +7,7 @@ from companion_mcp.config import CompanionConfig
 
 @pytest.mark.asyncio
 async def test_request_constructs_url():
-    client = CompanionClient(CompanionConfig(host="10.0.0.1", port=9000))
+    client = CompanionClient(CompanionConfig(host="10.0.0.1", port=9000, timeout_s=3.5))
     response = MagicMock()
     response.headers = {"content-type": "text/plain"}
     response.text = "ok"
@@ -25,6 +25,7 @@ async def test_request_constructs_url():
     assert result["url"] == "http://10.0.0.1:9000/api/test"
     assert result["ok"] is True
     assert result["status_code"] == 200
+    assert async_client.request.await_count == 1
 
 
 @pytest.mark.asyncio

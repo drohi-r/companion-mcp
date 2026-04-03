@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/MCP_Tools-18-14B8A6?style=for-the-badge" alt="18 MCP Tools">
 </p>
 
-An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 18 tools covering button control, styling, custom variables, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices via the HTTP API.
+An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes button control, styling, variable access, discovery reads, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices via the HTTP API.
 
 Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
@@ -18,8 +18,8 @@ Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/gra
 
 ```bash
 git clone https://github.com/drohi-r/companion-mcp && cd companion-mcp
-pip install -e ".[dev]"
-python -m companion_mcp
+uv sync
+uv run python -m companion_mcp
 ```
 
 Make sure Companion is running with the HTTP API enabled (default port 8000).
@@ -30,6 +30,7 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 |----------|---------|-------------|
 | `COMPANION_HOST` | `127.0.0.1` | Companion instance IP |
 | `COMPANION_PORT` | `8000` | HTTP API port |
+| `COMPANION_TIMEOUT_S` | `10.0` | HTTP timeout in seconds |
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
 
 ## Tools
@@ -58,6 +59,13 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `set_custom_variable` | Write a Companion custom variable |
 | `get_module_variable` | Read a variable from a Companion module connection |
 
+### Discovery / health
+| Tool | What it does |
+|------|-------------|
+| `health_check` | Probe Companion API reachability and return status details |
+| `list_surfaces` | List connected control surfaces |
+| `get_button_info` | Read raw API payload for a specific button location |
+
 ### Batch operations
 | Tool | What it does |
 |------|-------------|
@@ -78,8 +86,8 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 {
   "mcpServers": {
     "companion": {
-      "command": "python",
-      "args": ["-m", "companion_mcp"],
+      "command": "uv",
+      "args": ["run", "python", "-m", "companion_mcp"],
       "env": {
         "COMPANION_HOST": "127.0.0.1",
         "COMPANION_PORT": "8000"
@@ -95,8 +103,8 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 {
   "servers": {
     "companion": {
-      "command": "python",
-      "args": ["-m", "companion_mcp"],
+      "command": "uv",
+      "args": ["run", "python", "-m", "companion_mcp"],
       "env": {
         "COMPANION_HOST": "127.0.0.1",
         "COMPANION_PORT": "8000"
@@ -109,8 +117,8 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest -v
+uv sync
+uv run python -m pytest -v
 ```
 
 ## License
