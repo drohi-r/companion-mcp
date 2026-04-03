@@ -3,176 +3,113 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Companion MCP UI</title>
+    <meta name="theme-color" content="#080808">
+    <title>Companion MCP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@200;300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="app-shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">Companion MCP UI</p>
-          <h1>Operator-grade Companion control in a browser.</h1>
-          <p class="lede">Live grid inspection, verified writes, snapshots, presets, and rollback on top of the backend you already tested.</p>
-        </div>
-        <div class="hero-status">
-          <div class="stat-card">
-            <span class="stat-label">Connection</span>
-            <strong id="health-status">Checking…</strong>
-            <small id="health-detail">Companion health probe pending</small>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Target</span>
-            <strong id="target-host">-</strong>
-            <small id="target-detail">Waiting for config</small>
-          </div>
-        </div>
-      </header>
 
-      <main class="layout">
-        <section class="panel controls-panel">
-          <div class="panel-header">
-            <h2>Grid</h2>
+    <!-- ── Topbar ─────────────────────────────────────── -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="brand-mark">COMPANION</span>
+        <span class="brand-sub">MCP</span>
+      </div>
+      <div class="topbar-stats">
+        <div class="topbar-stat">
+          <span class="indicator" id="health-dot"></span>
+          <span class="topbar-label">Connection</span>
+          <strong id="health-status">Checking...</strong>
+        </div>
+        <div class="topbar-divider"></div>
+        <div class="topbar-stat">
+          <span class="topbar-label">Target</span>
+          <strong id="target-host">-</strong>
+        </div>
+        <div class="topbar-divider"></div>
+        <div class="topbar-stat">
+          <span class="topbar-label">Mode</span>
+          <strong id="target-detail">-</strong>
+        </div>
+      </div>
+      <small id="health-detail" class="topbar-probe"></small>
+    </header>
+
+    <div class="shell">
+
+      <!-- ── Grid Section ─────────────────────────────── -->
+      <section class="section">
+        <div class="section-bar">
+          <h2 class="section-title">Grid</h2>
+          <div class="grid-controls">
+            <label class="inline-label"><span>Page</span><input id="page" type="number" min="1" value="1"></label>
+            <label class="inline-label"><span>Rows</span><input id="rows" type="number" min="1" value="4"></label>
+            <label class="inline-label"><span>Cols</span><input id="columns" type="number" min="1" value="8"></label>
+            <label class="inline-check"><input id="include-empty" type="checkbox"><span>Empty</span></label>
             <button id="refresh-grid" class="btn btn-primary">Refresh</button>
           </div>
-          <div class="field-grid">
-            <label>
-              <span>Page</span>
-              <input id="page" type="number" min="1" value="1">
-            </label>
-            <label>
-              <span>Rows</span>
-              <input id="rows" type="number" min="1" value="4">
-            </label>
-            <label>
-              <span>Columns</span>
-              <input id="columns" type="number" min="1" value="8">
-            </label>
-            <label class="checkbox-row">
-              <input id="include-empty" type="checkbox">
-              <span>Include empty slots</span>
-            </label>
-          </div>
-          <div id="page-grid" class="page-grid"></div>
-        </section>
-
-        <section class="panel inspector-panel">
-          <div class="panel-header">
-            <h2>Inspector</h2>
-            <span id="selected-coords" class="chip">No button selected</span>
-          </div>
-          <div id="button-preview" class="button-preview empty">Select a button from the grid.</div>
-          <pre id="button-summary" class="summary-box">No button selected.</pre>
-
-          <div class="toolbar">
-            <button id="press-verified" class="btn">Press verified</button>
-            <button id="refresh-button" class="btn">Reload button</button>
-          </div>
-
-          <form id="style-form" class="style-form">
-            <h3>Verified Style Write</h3>
-            <div class="field-grid">
-              <label>
-                <span>Text</span>
-                <input id="style-text" type="text" placeholder="Button label">
-              </label>
-              <label>
-                <span>Text Color</span>
-                <input id="style-color" type="text" placeholder="ffffff">
-              </label>
-              <label>
-                <span>Background</span>
-                <input id="style-bgcolor" type="text" placeholder="0057ff">
-              </label>
-              <label>
-                <span>Size</span>
-                <input id="style-size" type="text" placeholder="18">
-              </label>
-              <label>
-                <span>Wait ms</span>
-                <input id="style-wait-ms" type="number" min="0" value="1000">
-              </label>
-              <label>
-                <span>Poll ms</span>
-                <input id="style-poll-ms" type="number" min="0" value="200">
-              </label>
-            </div>
-            <button class="btn btn-primary" type="submit">Apply verified style</button>
-          </form>
-        </section>
-
-        <section class="panel operations-panel">
-          <div class="panel-header">
-            <h2>Operations</h2>
-          </div>
-
-          <div class="ops-block">
-            <h3>Snapshots</h3>
-            <div class="inline-row">
-              <input id="snapshot-name" type="text" placeholder="snapshot name">
-              <button id="save-snapshot" class="btn">Save snapshot</button>
-            </div>
-            <div class="inline-row">
-              <select id="snapshot-list"></select>
-              <button id="load-snapshot" class="btn">Load</button>
-              <button id="diff-snapshot" class="btn">Diff current</button>
-              <button id="delete-snapshot" class="btn btn-danger">Delete</button>
-            </div>
-            <div class="inline-row">
-              <button id="preview-restore-all" class="btn">Preview restore all</button>
-              <button id="restore-all" class="btn">Restore all</button>
-              <button id="preview-restore-selected" class="btn">Preview selected</button>
-              <button id="restore-selected" class="btn btn-primary">Restore selected</button>
-            </div>
-          </div>
-
-          <div class="ops-block">
-            <h3>Presets</h3>
-            <div class="inline-row">
-              <input id="preset-name" type="text" placeholder="preset name">
-              <button id="save-preset" class="btn">Save preset</button>
-            </div>
-            <div class="inline-row">
-              <select id="preset-list"></select>
-              <button id="preview-preset" class="btn">Preview</button>
-              <button id="apply-preset" class="btn btn-primary">Apply</button>
-              <button id="delete-preset" class="btn btn-danger">Delete</button>
-            </div>
-          </div>
-
-          <div class="ops-block">
-            <h3>Transactions</h3>
-            <div class="inline-row">
-              <input id="transaction-name" type="text" placeholder="txn-2026-04-03-a">
-              <button id="apply-transaction" class="btn">Snapshot + style selected button</button>
-              <button id="rollback-transaction" class="btn btn-danger">Rollback</button>
-            </div>
-          </div>
-
-          <div class="ops-block">
-            <h3>Search</h3>
-            <div class="inline-row">
-              <input id="search-query" type="text" placeholder="text, control id, type">
-              <button id="run-search" class="btn">Find</button>
-            </div>
-            <pre id="search-results" class="summary-box">No search run yet.</pre>
-          </div>
-        </section>
-      </main>
-
-      <section class="panel response-panel">
-        <div class="panel-header">
-          <h2>Last Response</h2>
         </div>
-        <pre id="last-response" class="summary-box">No actions yet.</pre>
+        <div id="page-grid" class="page-grid"></div>
       </section>
 
-      <section class="panel response-panel">
-        <div class="panel-header">
-          <h2>Activity Log</h2>
+      <!-- ── Inspector + Style ────────────────────────── -->
+      <section class="section">
+        <div class="two-col">
+          <div class="panel">
+            <div class="panel-bar">
+              <h2 class="section-title">Inspector</h2>
+              <span id="selected-coords" class="chip">No selection</span>
+            </div>
+            <div id="button-preview" class="preview-box">Select a button from the grid</div>
+            <div class="inspector-actions">
+              <button id="press-verified" class="btn">Press Verified</button>
+              <button id="refresh-button" class="btn">Reload</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-bar">
+              <h2 class="section-title">Style Write</h2>
+            </div>
+            <form id="style-form" class="style-form">
+              <div class="form-grid">
+                <label><span>Text</span><input id="style-text" type="text" placeholder="Label"></label>
+                <label><span>Color</span><input id="style-color" type="text" placeholder="ffffff"></label>
+                <label><span>BG</span><input id="style-bgcolor" type="text" placeholder="0057ff"></label>
+                <label><span>Size</span><input id="style-size" type="text" placeholder="18"></label>
+                <label><span>Wait ms</span><input id="style-wait-ms" type="number" min="0" value="1000"></label>
+                <label><span>Poll ms</span><input id="style-poll-ms" type="number" min="0" value="200"></label>
+              </div>
+              <button class="btn btn-primary btn-full" type="submit">Apply Verified Style</button>
+            </form>
+          </div>
         </div>
-        <pre id="activity-log" class="summary-box">No activity yet.</pre>
       </section>
+
     </div>
+
+    <!-- Hidden elements referenced by app.js to avoid null errors -->
+    <div style="display:none">
+      <pre id="button-summary"></pre>
+      <input id="snapshot-name"><select id="snapshot-list"></select>
+      <button id="save-snapshot"></button><button id="load-snapshot"></button>
+      <button id="diff-snapshot"></button><button id="delete-snapshot"></button>
+      <button id="preview-restore-all"></button><button id="restore-all"></button>
+      <button id="preview-restore-selected"></button><button id="restore-selected"></button>
+      <input id="preset-name"><select id="preset-list"></select>
+      <button id="save-preset"></button><button id="preview-preset"></button>
+      <button id="apply-preset"></button><button id="delete-preset"></button>
+      <input id="transaction-name">
+      <button id="apply-transaction"></button><button id="rollback-transaction"></button>
+      <input id="search-query"><button id="run-search"></button>
+      <pre id="search-results"></pre>
+      <pre id="last-response"></pre>
+      <pre id="activity-log"></pre>
+    </div>
+
+    <div class="grain"></div>
     <script src="/app.js" type="module"></script>
   </body>
-  </html>
+</html>

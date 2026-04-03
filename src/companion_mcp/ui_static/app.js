@@ -15,6 +15,7 @@ const els = {
   includeEmpty: document.querySelector("#include-empty"),
   refreshGrid: document.querySelector("#refresh-grid"),
   pageGrid: document.querySelector("#page-grid"),
+  healthDot: document.querySelector("#health-dot"),
   healthStatus: document.querySelector("#health-status"),
   healthDetail: document.querySelector("#health-detail"),
   targetHost: document.querySelector("#target-host"),
@@ -100,9 +101,9 @@ function renderGridButton(button) {
   const controlType = button.control?.config?.type || button.control_type || "empty";
   const preview = button.preview?.image;
   element.innerHTML = `
-    ${preview ? `<img src="${preview}" alt="">` : `<div class="button-preview empty">No preview</div>`}
+    ${preview ? `<img src="${preview}" alt="">` : ""}
     <strong>${text}</strong>
-    <small>${button.row}/${button.column} · ${controlType}</small>
+    <small>${button.row}/${button.column}</small>
   `;
   element.addEventListener("click", () => selectButton(button));
   return element;
@@ -111,10 +112,10 @@ function renderGridButton(button) {
 function renderPreview(button) {
   const image = button.preview?.image;
   if (!image) {
-    els.buttonPreview.textContent = "No preview image available.";
+    els.buttonPreview.textContent = "No preview available";
     return;
   }
-  els.buttonPreview.innerHTML = `<img src="${image}" alt="Button preview">`;
+  els.buttonPreview.innerHTML = `<img src="${image}" alt="Preview">`;
 }
 
 function syncStyleForm(button) {
@@ -127,7 +128,7 @@ function syncStyleForm(button) {
 
 async function selectButton(button) {
   state.selected = {page: button.page, row: button.row, column: button.column};
-  els.selectedCoords.textContent = `Page ${button.page} · Row ${button.row} · Column ${button.column}`;
+  els.selectedCoords.textContent = `P${button.page} R${button.row} C${button.column}`;
   renderPreview(button);
   syncStyleForm(button);
 
@@ -143,9 +144,11 @@ async function refreshHealth() {
   const config = await api("/api/config");
   const health = await api("/api/health");
   els.targetHost.textContent = `${config.host}:${config.port}`;
-  els.targetDetail.textContent = `Writes ${config.write_enabled ? "enabled" : "disabled"} · UI ${window.location.host}`;
-  els.healthStatus.textContent = health.ok ? "Reachable" : "Unavailable";
-  els.healthDetail.textContent = `Probe ${health.status_code} · ${health.app_info?.body || "no app info"}`;
+  els.targetDetail.textContent = config.write_enabled ? "Read / Write" : "Read Only";
+  const ok = health.ok;
+  els.healthStatus.textContent = ok ? "Online" : "Offline";
+  els.healthDot.className = `indicator ${ok ? "ok" : "err"}`;
+  els.healthDetail.textContent = `${health.status_code || "?"} ${health.app_info?.body || ""}`.trim();
 }
 
 async function refreshGrid(selectFirst = true) {
@@ -155,7 +158,7 @@ async function refreshGrid(selectFirst = true) {
   state.includeEmpty = els.includeEmpty.checked;
   const payload = await api(`/api/page?${currentGridQuery().toString()}`);
   state.lastInventory = payload;
-  els.pageGrid.style.gridTemplateColumns = `repeat(${state.columns}, minmax(92px, 1fr))`;
+  els.pageGrid.style.gridTemplateColumns = `repeat(${state.columns}, 1fr)`;
   els.pageGrid.innerHTML = "";
   const buttons = payload.buttons || [];
   buttons.forEach((button) => els.pageGrid.appendChild(renderGridButton(button)));
@@ -176,7 +179,7 @@ function renderSearchResults(payload) {
     row.className = "search-result";
     row.innerHTML = `
       <strong>${match.style_meta?.text || match.control_id || "Unnamed"}</strong>
-      <small>Page ${match.page} · Row ${match.row} · Column ${match.column} · ${match.control_type || "unknown"}</small>
+      <small>P${match.page} R${match.row} C${match.column} · ${match.control_type || "?"}</small>
     `;
     row.addEventListener("click", async () => {
       const payload = await api(`/api/button?page=${match.page}&row=${match.row}&column=${match.column}`);
@@ -214,33 +217,27 @@ function selectedCoords() {
 }
 
 async function saveSnapshot() {
-  const payload = await api("/api/snapshots/save", {
+  await api("/api/snapshots/save", {
     method: "POST",
     body: JSON.stringify({
       name: els.snapshotName.value || `page-${state.page}`,
-      page: state.page,
-      rows: state.rows,
-      columns: state.columns,
+      page: state.page, rows: state.rows, columns: state.columns,
       include_empty: state.includeEmpty,
     }),
   });
   await refreshSnapshots();
-  return payload;
 }
 
 async function savePreset() {
-  const payload = await api("/api/presets/save", {
+  await api("/api/presets/save", {
     method: "POST",
     body: JSON.stringify({
       name: els.presetName.value || `page-${state.page}`,
-      page: state.page,
-      rows: state.rows,
-      columns: state.columns,
+      page: state.page, rows: state.rows, columns: state.columns,
       include_empty: state.includeEmpty,
     }),
   });
   await refreshPresets();
-  return payload;
 }
 
 async function applyVerifiedStyle(event) {
@@ -275,9 +272,7 @@ async function previewPreset() {
     method: "POST",
     body: JSON.stringify({
       name: els.presetList.value,
-      page: state.page,
-      origin_row: 0,
-      origin_column: 0,
+      page: state.page, origin_row: 0, origin_column: 0,
     }),
   });
 }
@@ -287,11 +282,8 @@ async function applyPreset() {
     method: "POST",
     body: JSON.stringify({
       name: els.presetList.value,
-      page: state.page,
-      origin_row: 0,
-      origin_column: 0,
-      wait_ms: 1000,
-      poll_ms: 200,
+      page: state.page, origin_row: 0, origin_column: 0,
+      wait_ms: 1000, poll_ms: 200,
     }),
   });
   await refreshGrid(false);
@@ -317,9 +309,7 @@ async function diffSnapshot() {
     method: "POST",
     body: JSON.stringify({
       name: els.snapshotList.value,
-      page: state.page,
-      rows: state.rows,
-      columns: state.columns,
+      page: state.page, rows: state.rows, columns: state.columns,
       include_empty: state.includeEmpty,
     }),
   });
@@ -347,8 +337,7 @@ async function restoreSnapshot(selectedOnly) {
       name: els.snapshotList.value,
       selected_only: selectedOnly,
       ...selected,
-      wait_ms: 1000,
-      poll_ms: 200,
+      wait_ms: 1000, poll_ms: 200,
     }),
   });
   await refreshGrid(false);
@@ -371,19 +360,15 @@ async function applyTransaction() {
     method: "POST",
     body: JSON.stringify({
       snapshot_name: els.transactionName.value || `txn-page-${state.page}`,
-      page: state.page,
-      rows: state.rows,
-      columns: state.columns,
+      page: state.page, rows: state.rows, columns: state.columns,
       styles: [{
-        row,
-        column,
+        row, column,
         text: els.styleText.value,
         color: els.styleColor.value,
         bgcolor: els.styleBgcolor.value,
         size: els.styleSize.value,
       }],
-      wait_ms: 1000,
-      poll_ms: 200,
+      wait_ms: 1000, poll_ms: 200,
     }),
   });
   await refreshSnapshots();
@@ -395,8 +380,7 @@ async function rollbackTransaction() {
     method: "POST",
     body: JSON.stringify({
       snapshot_name: els.transactionName.value || `txn-page-${state.page}`,
-      wait_ms: 1000,
-      poll_ms: 200,
+      wait_ms: 1000, poll_ms: 200,
     }),
   });
   await refreshGrid(false);
