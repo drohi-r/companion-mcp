@@ -320,6 +320,19 @@ async def test_save_and_load_page_inventory_snapshot(mock_snapshot_page_inventor
     assert loaded["inventory"]["page"] == 1
 
 
+@pytest.mark.asyncio
+@patch("companion_mcp.server.snapshot_page_inventory")
+async def test_list_and_delete_page_inventory_snapshots(mock_snapshot_page_inventory, monkeypatch, tmp_path):
+    from companion_mcp.server import save_page_inventory_snapshot, list_page_inventory_snapshots, delete_page_inventory_snapshot
+    monkeypatch.setenv("COMPANION_SNAPSHOT_DIR", str(tmp_path))
+    mock_snapshot_page_inventory.return_value = json.dumps({"page": 1, "button_count": 0, "buttons": []})
+    await save_page_inventory_snapshot("snap-a", 1)
+    listed = json.loads(await list_page_inventory_snapshots())
+    assert listed["count"] == 1
+    deleted = json.loads(await delete_page_inventory_snapshot("snap-a"))
+    assert deleted["deleted"] is True
+
+
 
 @pytest.mark.asyncio
 async def test_diff_page_inventory():
@@ -384,6 +397,46 @@ async def test_preview_restore_page_style_from_snapshot_via_file(monkeypatch, tm
     result = json.loads(await preview_restore_page_style_from_snapshot("snap"))
     assert result["count"] == 1
     assert result["preview"][0]["color"] == "ffffff"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.snapshot_page_inventory")
+async def test_save_load_list_delete_page_style_preset(mock_snapshot_page_inventory, monkeypatch, tmp_path):
+    from companion_mcp.server import (
+        save_page_style_preset,
+        load_page_style_preset,
+        list_page_style_presets,
+        delete_page_style_preset,
+    )
+    monkeypatch.setenv("COMPANION_PRESET_DIR", str(tmp_path))
+    mock_snapshot_page_inventory.return_value = json.dumps({
+        "page": 2,
+        "rows": 1,
+        "columns": 2,
+        "buttons": [{"row": 0, "column": 1, "style_meta": {"text": "GO", "color": 16777215}}],
+    })
+    saved = json.loads(await save_page_style_preset("preset-a", 2, rows=1, columns=2))
+    assert Path(saved["path"]).exists()
+    loaded = json.loads(await load_page_style_preset("preset-a"))
+    assert loaded["preset"]["page"] == 2
+    listed = json.loads(await list_page_style_presets())
+    assert listed["count"] == 1
+    deleted = json.loads(await delete_page_style_preset("preset-a"))
+    assert deleted["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_preview_apply_page_style_preset(monkeypatch, tmp_path):
+    from companion_mcp.server import preview_apply_page_style_preset
+    monkeypatch.setenv("COMPANION_PRESET_DIR", str(tmp_path))
+    (tmp_path / "preset-a.json").write_text(json.dumps({
+        "page": 2,
+        "entries": [{"row": 0, "column": 1, "text": "GO", "color": "ffffff"}],
+    }))
+    result = json.loads(await preview_apply_page_style_preset("preset-a", page=3, origin_row=1, origin_column=2))
+    assert result["page"] == 3
+    assert result["preview"][0]["row"] == 1
+    assert result["preview"][0]["column"] == 3
 
 
 @pytest.mark.asyncio
@@ -543,6 +596,25 @@ async def test_rollback_page_style_transaction(mock_restore_page_style_from_snap
     mock_restore_page_style_from_snapshot.return_value = json.dumps({"ok": True, "count": 1})
     result = json.loads(await rollback_page_style_transaction("txn-a"))
     assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.set_page_style_verified")
+async def test_apply_page_style_preset(mock_set_page_style_verified, monkeypatch, tmp_path):
+    from companion_mcp.server import apply_page_style_preset
+    monkeypatch.setenv("COMPANION_PRESET_DIR", str(tmp_path))
+    (tmp_path / "preset-a.json").write_text(json.dumps({
+        "page": 2,
+        "entries": [{"row": 0, "column": 1, "text": "GO", "color": "ffffff"}],
+    }))
+    mock_set_page_style_verified.return_value = json.dumps({"ok": True, "count": 1})
+    result = json.loads(await apply_page_style_preset("preset-a", page=3, origin_row=1, origin_column=2))
+    assert result["preset_name"] == "preset-a"
+    args = mock_set_page_style_verified.await_args
+    assert args.args[0] == 3
+    entries = json.loads(args.args[1])
+    assert entries[0]["row"] == 1
+    assert entries[0]["column"] == 3
 
 
 @pytest.mark.asyncio

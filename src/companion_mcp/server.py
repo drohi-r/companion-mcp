@@ -140,6 +140,15 @@ def _snapshot_path(name: str) -> Path:
     return _snapshot_dir() / f"{safe_name}.json"
 
 
+def _preset_dir() -> Path:
+    return Path(os.environ.get("COMPANION_PRESET_DIR", ".companion-presets"))
+
+
+def _preset_path(name: str) -> Path:
+    safe_name = _validate_snapshot_name(name)
+    return _preset_dir() / f"{safe_name}.json"
+
+
 def _normalize_style_payload(raw_style: dict[str, Any]) -> dict[str, Any]:
     style: dict[str, Any] = {}
     for key, value in raw_style.items():
@@ -366,6 +375,66 @@ def _read_snapshot_file(name: str) -> dict[str, Any]:
     if not path.exists():
         raise ValueError(f"Snapshot {name!r} does not exist.")
     return json.loads(path.read_text())
+
+
+def _list_named_json_files(directory: Path) -> list[dict[str, Any]]:
+    if not directory.exists():
+        return []
+    items = []
+    for path in sorted(directory.glob("*.json")):
+        stat = path.stat()
+        items.append({
+            "name": path.stem,
+            "path": str(path),
+            "size_bytes": stat.st_size,
+            "modified_at": stat.st_mtime,
+        })
+    return items
+
+
+def _delete_named_json_file(path: Path, label: str, name: str) -> dict[str, Any]:
+    if not path.exists():
+        raise ValueError(f"{label} {name!r} does not exist.")
+    path.unlink()
+    return {"ok": True, "name": name, "path": str(path), "deleted": True}
+
+
+def _write_preset_file(name: str, payload: dict[str, Any]) -> Path:
+    path = _preset_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str))
+    return path
+
+
+def _read_preset_file(name: str) -> dict[str, Any]:
+    path = _preset_path(name)
+    if not path.exists():
+        raise ValueError(f"Preset {name!r} does not exist.")
+    return json.loads(path.read_text())
+
+
+def _preset_entries_from_inventory(inventory: dict[str, Any]) -> list[dict[str, Any]]:
+    return _restore_entries_from_inventory(inventory)
+
+
+def _offset_preset_entries(
+    entries: list[dict[str, Any]],
+    *,
+    page: int,
+    origin_row: int,
+    origin_column: int,
+) -> list[dict[str, Any]]:
+    resolved = []
+    for entry in entries:
+        row = origin_row + int(entry["row"])
+        column = origin_column + int(entry["column"])
+        _validate_button_coords(page, row, column)
+        resolved.append({
+            "row": row,
+            "column": column,
+            **{k: v for k, v in entry.items() if k not in {"row", "column"}},
+        })
+    return resolved
 
 
 async def _poll_button_info(
@@ -735,6 +804,25 @@ async def load_page_inventory_snapshot(name: str) -> str:
 
 @mcp.tool()
 @_handle_errors
+async def list_page_inventory_snapshots() -> str:
+    """List saved page inventory snapshot files."""
+    return _json({
+        "ok": True,
+        "directory": str(_snapshot_dir()),
+        "count": len(_list_named_json_files(_snapshot_dir())),
+        "snapshots": _list_named_json_files(_snapshot_dir()),
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def delete_page_inventory_snapshot(name: str) -> str:
+    """Delete a saved page inventory snapshot file."""
+    return _json(_delete_named_json_file(_snapshot_path(name), "Snapshot", _validate_snapshot_name(name)))
+
+
+@mcp.tool()
+@_handle_errors
 async def diff_page_inventory(before_inventory_json: str, after_inventory_json: str) -> str:
     """Compare two page inventory snapshots and summarize added, removed, and changed buttons."""
     before = json.loads(before_inventory_json)
@@ -786,6 +874,93 @@ async def preview_restore_page_style_from_snapshot(name: str, coords_json: str =
         "count": len(entries),
         "writes_companion": False,
         "preview": entries,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def save_page_style_preset(name: str, page: int, rows: int = 4, columns: int = 8, include_empty: bool = False) -> str:
+    """Save the current page style state as a reusable preset file."""
+    inventory = json.loads(await snapshot_page_inventory(page, rows=rows, columns=columns, include_empty=include_empty))
+    entries = _preset_entries_from_inventory(inventory)
+    payload = {
+        "name": _validate_snapshot_name(name),
+        "page": page,
+        "rows": rows,
+        "columns": columns,
+        "include_empty": include_empty,
+        "count": len(entries),
+        "entries": entries,
+    }
+    path = _write_preset_file(name, payload)
+    return _json({
+        "ok": True,
+        "name": _validate_snapshot_name(name),
+        "path": str(path),
+        "count": len(entries),
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def load_page_style_preset(name: str) -> str:
+    """Load a saved page style preset file."""
+    preset = _read_preset_file(name)
+    return _json({
+        "ok": True,
+        "name": _validate_snapshot_name(name),
+        "path": str(_preset_path(name)),
+        "preset": preset,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def list_page_style_presets() -> str:
+    """List saved page style preset files."""
+    return _json({
+        "ok": True,
+        "directory": str(_preset_dir()),
+        "count": len(_list_named_json_files(_preset_dir())),
+        "presets": _list_named_json_files(_preset_dir()),
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def delete_page_style_preset(name: str) -> str:
+    """Delete a saved page style preset file."""
+    return _json(_delete_named_json_file(_preset_path(name), "Preset", _validate_snapshot_name(name)))
+
+
+@mcp.tool()
+@_handle_errors
+async def preview_apply_page_style_preset(
+    name: str,
+    page: int = 0,
+    origin_row: int = 0,
+    origin_column: int = 0,
+) -> str:
+    """Preview applying a saved preset onto a page, optionally with row/column offsets."""
+    preset = _read_preset_file(name)
+    target_page = page or preset.get("page")
+    if not isinstance(target_page, int):
+        raise ValueError("Preset does not contain a valid page and no page override was provided.")
+    _validate_page(target_page)
+    _validate_row_column(origin_row, origin_column)
+    entries = preset.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("Preset file is missing entries.")
+    resolved = _offset_preset_entries(entries, page=target_page, origin_row=origin_row, origin_column=origin_column)
+    return _json({
+        "action": "preview_apply_page_style_preset",
+        "name": _validate_snapshot_name(name),
+        "page": target_page,
+        "origin_row": origin_row,
+        "origin_column": origin_column,
+        "count": len(resolved),
+        "writes_companion": False,
+        "preview": resolved,
     })
 
 
@@ -1293,6 +1468,36 @@ async def apply_page_style_transaction(
 async def rollback_page_style_transaction(snapshot_name: str, wait_ms: int = 500, poll_ms: int = 100, coords_json: str = "") -> str:
     """Rollback page styles from a saved transaction snapshot."""
     return await restore_page_style_from_snapshot(snapshot_name, wait_ms=wait_ms, poll_ms=poll_ms, coords_json=coords_json)
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def apply_page_style_preset(
+    name: str,
+    page: int = 0,
+    origin_row: int = 0,
+    origin_column: int = 0,
+    wait_ms: int = 500,
+    poll_ms: int = 100,
+) -> str:
+    """Apply a saved page style preset with optional page override and coordinate offsets."""
+    preset = _read_preset_file(name)
+    target_page = page or preset.get("page")
+    if not isinstance(target_page, int):
+        raise ValueError("Preset does not contain a valid page and no page override was provided.")
+    _validate_page(target_page)
+    _validate_row_column(origin_row, origin_column)
+    entries = preset.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("Preset file is missing entries.")
+    resolved = _offset_preset_entries(entries, page=target_page, origin_row=origin_row, origin_column=origin_column)
+    result = json.loads(await set_page_style_verified(target_page, json.dumps(resolved), wait_ms=wait_ms, poll_ms=poll_ms))
+    result["preset_name"] = _validate_snapshot_name(name)
+    result["preset_path"] = str(_preset_path(name))
+    result["origin_row"] = origin_row
+    result["origin_column"] = origin_column
+    return _json(result)
 
 
 @mcp.tool()
