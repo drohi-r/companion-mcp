@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 companion-mcp = "companion_mcp.server:main"
+companion-mcp-ui = "companion_mcp.ui:main"
 
 [build-system]
 requires = ["hatchling"]

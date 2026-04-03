@@ -15,6 +15,8 @@ An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 5
 
 Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
+The repo also includes a lightweight local browser UI for humans who want the same verified flows without manually issuing MCP tool calls.
+
 ## Why this exists
 
 Companion is the physical button layer that ties a live production stack together. An operator presses a Stream Deck button and it fires a grandMA2 cue, triggers a Resolume clip, or starts a laser sequence. But programming those buttons is manual — you click through the Companion UI, one button at a time, configuring actions, labels, and colors.
@@ -28,6 +30,22 @@ git clone https://github.com/drohi-r/companion-mcp && cd companion-mcp
 uv sync
 uv run python -m companion_mcp
 ```
+
+## Browser UI
+
+Run the local operator UI:
+
+```bash
+uv run companion-mcp-ui
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8088
+```
+
+The UI is intentionally local-first. It sits on top of the same backend logic as the MCP tools, so verified writes, snapshots, presets, and rollback behave the same in the browser as they do through MCP.
 
 Make sure Companion is running on the target host and port. Current Companion builds use:
 - HTTP endpoints for button actions and style writes
@@ -43,6 +61,8 @@ Make sure Companion is running on the target host and port. Current Companion bu
 | `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for target hosts. Set `*` to allow any. |
 | `COMPANION_WRITE_ENABLED` | `1` | Set to `0` for read-only mode |
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
+| `COMPANION_UI_HOST` | `127.0.0.1` | Browser UI bind address |
+| `COMPANION_UI_PORT` | `8088` | Browser UI port |
 
 ## Tools
 
@@ -193,11 +213,21 @@ This server is designed for live show environments where accidental writes can d
   - write accepted and the preview changed after a short delay
   - write accepted and style state changed, but visible render still did not change
 
+## Why the UI helps
+
+The MCP backend is already the real product. The UI does not replace it; it makes it faster and safer for humans:
+
+- click buttons in a page grid instead of remembering `page,row,column`
+- inspect preview, style, runtime summary, and the last verified response in one place
+- save and browse snapshots and presets without opening JSON files
+- run verified style changes and transaction rollback from a browser during show prep
+- hand the system to an operator who is not going to type MCP calls by hand
+
 ## Development
 
 ```bash
 uv sync
-uv run python -m pytest -v   # 69 tests
+uv run python -m pytest -v
 ```
 
 ## License
