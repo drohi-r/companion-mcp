@@ -7,12 +7,19 @@
 <p align="center">
   <a href="https://github.com/drohi-r/companion-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-orange?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=for-the-badge" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/MCP_Tools-18-14B8A6?style=for-the-badge" alt="18 MCP Tools">
+  <img src="https://img.shields.io/badge/MCP_Tools-28-14B8A6?style=for-the-badge" alt="28 MCP Tools">
+  <img src="https://img.shields.io/badge/Tests-39-14B8A6?style=for-the-badge" alt="39 Tests">
 </p>
 
-An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes button control, styling, variable access, discovery reads, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices via the HTTP API.
+An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 28 tools covering button control, styling, page discovery, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices via the HTTP API.
 
 Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
+
+## Why this exists
+
+Companion is the physical button layer that ties a live production stack together. An operator presses a Stream Deck button and it fires a grandMA2 cue, triggers a Resolume clip, or starts a laser sequence. But programming those buttons is manual — you click through the Companion UI, one button at a time, configuring actions, labels, and colors.
+
+This MCP server lets an AI do that work. It can read your current button layout, preview changes before applying them, and batch-program entire pages in seconds. Combined with MA2 Agent and Resolume MCP, an AI assistant can program the entire show control surface from a single conversation.
 
 ## Quick start
 
@@ -30,14 +37,43 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 |----------|---------|-------------|
 | `COMPANION_HOST` | `127.0.0.1` | Companion instance IP |
 | `COMPANION_PORT` | `8000` | HTTP API port |
-| `COMPANION_TIMEOUT_S` | `10.0` | HTTP timeout in seconds |
-| `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for Companion targets. Set `*` to allow any host. |
-| `COMPANION_WRITE_ENABLED` | `1` | Set to `0` for read-only mode when you want to expose the MCP more safely. |
+| `COMPANION_TIMEOUT_S` | `10.0` | HTTP request timeout in seconds |
+| `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for target hosts. Set `*` to allow any. |
+| `COMPANION_WRITE_ENABLED` | `1` | Set to `0` for read-only mode |
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
 
 ## Tools
 
+### Discovery and reads
+
+Safe, read-only tools for understanding the current state of Companion.
+
+| Tool | What it does |
+|------|-------------|
+| `get_server_config` | Return current MCP server configuration and safety settings |
+| `health_check` | Probe Companion API reachability and return status |
+| `list_surfaces` | List connected control surfaces (Stream Deck, etc.) |
+| `get_button_info` | Read the raw API payload for a specific button |
+| `get_page_grid` | Read a rectangular grid of buttons from a page |
+| `export_page_layout` | Export a page region as a reusable layout payload |
+| `get_custom_variable` | Read a Companion custom variable |
+| `get_module_variable` | Read a variable from a Companion module connection |
+| `snapshot_custom_variables` | Read a named list of custom variables in one call |
+
+### Preview (plan before you write)
+
+Validate and preview operations without touching Companion. Use these to inspect what a batch operation will do before committing.
+
+| Tool | What it does |
+|------|-------------|
+| `preview_page_style` | Validate and preview a page-style batch |
+| `preview_label_button_grid` | Resolve a label grid into coordinates |
+| `preview_button_template` | Place a reusable template at an origin and preview the result |
+
 ### Button actions
+
+Require `COMPANION_WRITE_ENABLED=1` (default).
+
 | Tool | What it does |
 |------|-------------|
 | `press_button` | Press and release a button |
@@ -48,45 +84,28 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `set_step` | Set the current action step |
 
 ### Button styling
+
 | Tool | What it does |
 |------|-------------|
 | `set_button_text` | Change button display text |
-| `set_button_color` | Change text and/or background color |
+| `set_button_color` | Change text and/or background color (6-digit hex) |
 | `set_button_style` | Set multiple style properties at once |
 
-### Variables
-| Tool | What it does |
-|------|-------------|
-| `get_custom_variable` | Read a Companion custom variable |
-| `set_custom_variable` | Write a Companion custom variable |
-| `get_module_variable` | Read a variable from a Companion module connection |
-| `snapshot_custom_variables` | Read a named list of custom variables in one call |
-
-### Discovery / health
-| Tool | What it does |
-|------|-------------|
-| `health_check` | Probe Companion API reachability and return status details |
-| `list_surfaces` | List connected control surfaces |
-| `get_button_info` | Read raw API payload for a specific button location |
-| `get_page_grid` | Read a rectangular page region by page/row/column |
-| `export_page_layout` | Export a page region into a reusable layout payload |
-
 ### Batch operations
-| Tool | What it does |
-|------|-------------|
-| `press_button_sequence` | Press multiple buttons in order with delay |
-| `set_page_style` | Batch-set style on multiple buttons |
-| `label_button_grid` | Label a grid of buttons from a flat list |
-| `preview_page_style` | Validate and preview a page-style batch without writing |
-| `preview_label_button_grid` | Resolve labels into coordinates without writing |
-| `preview_button_template` | Place a reusable relative template at a page origin without writing |
-| `apply_button_template` | Apply a reusable relative template at a page origin |
 
-### System
 | Tool | What it does |
 |------|-------------|
-| `get_server_config` | Return current MCP server config |
-| `rescan_surfaces` | Rescan USB surfaces |
+| `press_button_sequence` | Press multiple buttons in order with configurable delay |
+| `set_page_style` | Batch-set style on multiple buttons on a page |
+| `label_button_grid` | Label a grid of buttons from a flat list of names |
+| `apply_button_template` | Apply a reusable button template at a page origin |
+
+### Variables and system
+
+| Tool | What it does |
+|------|-------------|
+| `set_custom_variable` | Write a Companion custom variable |
+| `rescan_surfaces` | Rescan connected USB surfaces |
 | `press_bank_button` | Legacy bank API (deprecated, still works) |
 
 ## Claude Desktop
@@ -123,19 +142,22 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 }
 ```
 
+## Production safety
+
+This server is designed for live show environments where accidental writes can disrupt a running production.
+
+- **Host allowlisting** — only `127.0.0.1`, `localhost`, and `::1` are permitted by default. Add LAN hosts explicitly via `COMPANION_ALLOWED_HOSTS`.
+- **Write gating** — set `COMPANION_WRITE_ENABLED=0` to block all write operations. Read and preview tools remain available.
+- **Preview before apply** — every batch operation has a corresponding preview tool that validates inputs and shows exactly what will change, without touching Companion.
+- **Input validation** — page, row, column, color hex, delay bounds, and template structure are all validated before any API call is made. Invalid inputs return structured JSON errors, never raw exceptions.
+- **Error isolation** — all tools are wrapped in `_handle_errors`. Network failures, JSON parse errors, and validation failures return `{"ok": false, "error": "...", "blocked": true}` instead of crashing the MCP session.
+
 ## Development
 
 ```bash
 uv sync
-uv run python -m pytest -v
+uv run python -m pytest -v   # 39 tests
 ```
-
-## Safety notes
-
-- By default the MCP only permits Companion targets on `127.0.0.1`, `localhost`, or `::1`.
-- To control a LAN-hosted Companion instance, add it to `COMPANION_ALLOWED_HOSTS`.
-- If you want to expose the MCP in a less trusted environment, set `COMPANION_WRITE_ENABLED=0` to force read-only behavior.
-- Preview tools are intended for agent planning before batch writes.
 
 ## License
 
