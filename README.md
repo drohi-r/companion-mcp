@@ -31,6 +31,7 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `COMPANION_HOST` | `127.0.0.1` | Companion instance IP |
 | `COMPANION_PORT` | `8000` | HTTP API port |
 | `COMPANION_TIMEOUT_S` | `10.0` | HTTP timeout in seconds |
+| `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for Companion targets. Set `*` to allow any host. |
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
 
 ## Tools
@@ -65,6 +66,7 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `health_check` | Probe Companion API reachability and return status details |
 | `list_surfaces` | List connected control surfaces |
 | `get_button_info` | Read raw API payload for a specific button location |
+| `get_page_grid` | Read a rectangular page region by page/row/column |
 
 ### Batch operations
 | Tool | What it does |
@@ -72,6 +74,8 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `press_button_sequence` | Press multiple buttons in order with delay |
 | `set_page_style` | Batch-set style on multiple buttons |
 | `label_button_grid` | Label a grid of buttons from a flat list |
+| `preview_page_style` | Validate and preview a page-style batch without writing |
+| `preview_label_button_grid` | Resolve labels into coordinates without writing |
 
 ### System
 | Tool | What it does |
@@ -120,6 +124,12 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 uv sync
 uv run python -m pytest -v
 ```
+
+## Safety notes
+
+- By default the MCP only permits Companion targets on `127.0.0.1`, `localhost`, or `::1`.
+- To control a LAN-hosted Companion instance, add it to `COMPANION_ALLOWED_HOSTS`.
+- Preview tools are intended for agent planning before batch writes.
 
 ## License
 

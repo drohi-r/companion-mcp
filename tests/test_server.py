@@ -9,6 +9,7 @@ async def test_get_server_config():
     result = json.loads(await get_server_config())
     assert result["host"] == "127.0.0.1"
     assert result["port"] == 8000
+    assert result["timeout_s"] == 10.0
     assert "base_url" in result
 
 
@@ -49,6 +50,22 @@ async def test_get_button_info(mock_client_factory):
     result = json.loads(await get_button_info(1, 0, 0))
     assert result["ok"] is True
     assert result["body"]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_get_page_grid(mock_client_factory):
+    from companion_mcp.server import get_page_grid
+    fake = MagicMock()
+    fake.get_button = AsyncMock(side_effect=[
+        {"ok": True, "status_code": 200, "body": {"text": "GO"}},
+        {"ok": True, "status_code": 200, "body": ""},
+    ])
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await get_page_grid(1, rows=1, columns=2))
+    assert result["count"] == 1
+    assert result["buttons"][0]["body"]["text"] == "GO"
 
 
 @pytest.mark.asyncio
@@ -133,6 +150,29 @@ async def test_press_button_sequence_rejects_negative_delay():
     result = json.loads(await press_button_sequence("[]", delay_ms=-1))
     assert result["blocked"] is True
     assert "delay_ms must be >= 0" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_preview_page_style():
+    from companion_mcp.server import preview_page_style
+    result = json.loads(
+        await preview_page_style(
+            1,
+            json.dumps([{"row": 0, "column": 0, "text": "GO", "color": "#ff0000"}]),
+        )
+    )
+    assert result["writes_companion"] is False
+    assert result["preview"][0]["style"]["color"] == "ff0000"
+
+
+@pytest.mark.asyncio
+async def test_preview_label_button_grid():
+    from companion_mcp.server import preview_label_button_grid
+    result = json.loads(await preview_label_button_grid(1, json.dumps(["GO", "", "STOP"]), columns=2))
+    assert result["writes_companion"] is False
+    assert result["labeled"] == 2
+    assert result["preview"][1]["row"] == 1
+    assert result["preview"][1]["column"] == 0
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ class CompanionConfig:
     host: str = "127.0.0.1"
     port: int = 8000
     timeout_s: float = 10.0
+    allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
 
     @property
     def base_url(self) -> str:
@@ -37,9 +38,29 @@ def _parse_timeout(env_name: str, default: str) -> float:
     return timeout_s
 
 
+def _parse_allowed_hosts(env_name: str, default: str) -> tuple[str, ...]:
+    raw = os.getenv(env_name, default)
+    hosts = tuple(host.strip() for host in raw.split(",") if host.strip())
+    if not hosts:
+        raise ValueError(f"{env_name} must include at least one host")
+    return hosts
+
+
+def _validate_allowed_host(host: str, allowed_hosts: tuple[str, ...]) -> None:
+    if "*" in allowed_hosts:
+        return
+    if host not in allowed_hosts:
+        raise ValueError(
+            f"COMPANION_HOST={host!r} is not allowed by COMPANION_ALLOWED_HOSTS={','.join(allowed_hosts)!r}"
+        )
+
+
 def load_config() -> CompanionConfig:
-    return CompanionConfig(
+    config = CompanionConfig(
         host=os.getenv("COMPANION_HOST", "127.0.0.1"),
         port=_parse_port("COMPANION_PORT", "8000"),
         timeout_s=_parse_timeout("COMPANION_TIMEOUT_S", "10.0"),
+        allowed_hosts=_parse_allowed_hosts("COMPANION_ALLOWED_HOSTS", "127.0.0.1,localhost,::1"),
     )
+    _validate_allowed_host(config.host, config.allowed_hosts)
+    return config

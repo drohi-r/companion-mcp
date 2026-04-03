@@ -94,6 +94,18 @@ def _validate_hex_color(value: str, field: str) -> None:
         raise ValueError(f"{field} must be a 6-digit hex color")
 
 
+def _normalize_style_payload(raw_style: dict[str, Any]) -> dict[str, Any]:
+    style: dict[str, Any] = {}
+    for key, value in raw_style.items():
+        if key in ("row", "column") or value in (None, ""):
+            continue
+        if key in {"color", "bgcolor"}:
+            value = str(value).lstrip("#")
+            _validate_hex_color(value, key)
+        style[key] = value
+    return style
+
+
 # ============================================================
 # Read Tools
 # ============================================================
@@ -107,6 +119,8 @@ async def get_server_config() -> str:
     return _json({
         "host": config.host,
         "port": config.port,
+        "timeout_s": config.timeout_s,
+        "allowed_hosts": list(config.allowed_hosts),
         "base_url": config.base_url,
     })
 
@@ -160,6 +174,43 @@ async def get_button_info(page: int, row: int, column: int) -> str:
     _validate_button_coords(page, row, column)
     result = await _client().get_button(page, row, column)
     return _json(result)
+
+
+@mcp.tool()
+@_handle_errors
+async def get_page_grid(page: int, rows: int = 4, columns: int = 8, include_empty: bool = False) -> str:
+    """Read a rectangular grid of button payloads for a page."""
+    _validate_page(page)
+    if rows <= 0:
+        raise ValueError("rows must be >= 1")
+    if columns <= 0:
+        raise ValueError("columns must be >= 1")
+
+    client = _client()
+    buttons: list[dict[str, Any]] = []
+    for row in range(rows):
+        for column in range(columns):
+            result = await client.get_button(page, row, column)
+            body = result.get("body")
+            is_empty = body in ("", None, {}, [])
+            if include_empty or not is_empty:
+                buttons.append({
+                    "page": page,
+                    "row": row,
+                    "column": column,
+                    "ok": result.get("ok", False),
+                    "status_code": result.get("status_code"),
+                    "body": body,
+                })
+
+    return _json({
+        "page": page,
+        "rows": rows,
+        "columns": columns,
+        "include_empty": include_empty,
+        "count": len(buttons),
+        "buttons": buttons,
+    })
 
 
 # ============================================================
@@ -279,15 +330,7 @@ async def set_button_style(
     _validate_button_coords(page, row, column)
     _validate_hex_color(color, "color")
     _validate_hex_color(bgcolor, "bgcolor")
-    style: dict[str, Any] = {}
-    if text:
-        style["text"] = text
-    if color:
-        style["color"] = color
-    if bgcolor:
-        style["bgcolor"] = bgcolor
-    if size:
-        style["size"] = size
+    style = _normalize_style_payload({"text": text, "color": color, "bgcolor": bgcolor, "size": size})
     result = await _client().set_style(page, row, column, **style)
     return _json(result)
 
@@ -368,9 +411,7 @@ async def set_page_style(page: int, buttons_json: str) -> str:
         if not isinstance(btn, dict) or "row" not in btn or "column" not in btn:
             raise ValueError("Each button must have row and column fields.")
         _validate_row_column(btn["row"], btn["column"])
-        _validate_hex_color(str(btn.get("color", "")), "color")
-        _validate_hex_color(str(btn.get("bgcolor", "")), "bgcolor")
-        style = {k: v for k, v in btn.items() if k not in ("row", "column") and v}
+        style = _normalize_style_payload(btn)
         result = await client.set_style(page, btn["row"], btn["column"], **style)
         results.append({"button": {"page": page, "row": btn["row"], "column": btn["column"]}, "result": result})
 
@@ -404,6 +445,69 @@ async def label_button_grid(page: int, labels_json: str, columns: int = 8) -> st
         results.append({"row": row, "column": col, "text": label, "result": result})
 
     return _json({"action": "label_grid", "page": page, "columns": columns, "labeled": len(results), "results": results})
+
+
+@mcp.tool()
+@_handle_errors
+async def preview_page_style(page: int, buttons_json: str) -> str:
+    """Validate and preview a batch page-style operation without writing to Companion."""
+    _validate_page(page)
+    buttons = json.loads(buttons_json)
+    if not isinstance(buttons, list):
+        raise ValueError("buttons_json must be a JSON array.")
+
+    preview: list[dict[str, Any]] = []
+    for btn in buttons:
+        if not isinstance(btn, dict) or "row" not in btn or "column" not in btn:
+            raise ValueError("Each button must have row and column fields.")
+        _validate_row_column(btn["row"], btn["column"])
+        style = _normalize_style_payload(btn)
+        preview.append({
+            "page": page,
+            "row": btn["row"],
+            "column": btn["column"],
+            "style": style,
+        })
+
+    return _json({
+        "action": "preview_page_style",
+        "page": page,
+        "count": len(preview),
+        "writes_companion": False,
+        "preview": preview,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def preview_label_button_grid(page: int, labels_json: str, columns: int = 8) -> str:
+    """Resolve a label grid into coordinates without writing to Companion."""
+    _validate_page(page)
+    if columns <= 0:
+        raise ValueError("columns must be >= 1")
+    labels = json.loads(labels_json)
+    if not isinstance(labels, list):
+        raise ValueError("labels_json must be a JSON array of strings.")
+
+    preview: list[dict[str, Any]] = []
+    for i, label in enumerate(labels):
+        if not label:
+            continue
+        preview.append({
+            "page": page,
+            "row": i // columns,
+            "column": i % columns,
+            "text": str(label),
+        })
+
+    return _json({
+        "action": "preview_label_grid",
+        "page": page,
+        "columns": columns,
+        "labeled": len(preview),
+        "writes_companion": False,
+        "preview": preview,
+    })
 
 
 # ============================================================
