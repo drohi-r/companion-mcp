@@ -42,6 +42,10 @@ def _error(message: str, **extra: Any) -> str:
     return _json({"ok": False, "error": message, **extra})
 
 
+def _compat_error(message: str, **extra: Any) -> str:
+    return _error(message, blocked=True, compatibility="current_companion_version", **extra)
+
+
 def _handle_errors(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
@@ -170,6 +174,12 @@ async def get_server_config() -> str:
 async def get_custom_variable(name: str) -> str:
     """Get the value of a Companion custom variable."""
     result = await _client().get_variable(f"/api/custom-variable/{name}/value")
+    if result.get("status_code") == 404:
+        return _compat_error(
+            "This Companion build does not expose readable custom-variable HTTP endpoints in the format this MCP expects.",
+            path=result["path"],
+            status_code=result["status_code"],
+        )
     return _json(result)
 
 
@@ -178,6 +188,12 @@ async def get_custom_variable(name: str) -> str:
 async def get_module_variable(connection: str, name: str) -> str:
     """Get a module variable value from a named Companion connection."""
     result = await _client().get_variable(f"/api/variable/{connection}/{name}/value")
+    if result.get("status_code") == 404:
+        return _compat_error(
+            "This Companion build does not expose readable module-variable HTTP endpoints in the format this MCP expects.",
+            path=result["path"],
+            status_code=result["status_code"],
+        )
     return _json(result)
 
 
@@ -186,13 +202,13 @@ async def get_module_variable(connection: str, name: str) -> str:
 async def health_check() -> str:
     """Probe Companion reachability and return API status details."""
     config = load_config()
-    result = await _client().request("GET", "/api/surfaces")
+    result = await _client().request("GET", "/")
     return _json({
         "ok": result["ok"],
         "host": config.host,
         "port": config.port,
         "base_url": config.base_url,
-        "probe_path": "/api/surfaces",
+        "probe_path": "/",
         "status_code": result["status_code"],
         "content_type": result["content_type"],
         "body": result["body"],
@@ -204,6 +220,12 @@ async def health_check() -> str:
 async def list_surfaces() -> str:
     """List connected Companion control surfaces."""
     result = await _client().list_surfaces()
+    if result.get("status_code") == 404:
+        return _compat_error(
+            "This Companion build does not expose a readable /api/surfaces endpoint. Surface discovery needs a compatibility update.",
+            path=result["path"],
+            status_code=result["status_code"],
+        )
     return _json(result)
 
 
@@ -213,6 +235,12 @@ async def get_button_info(page: int, row: int, column: int) -> str:
     """Fetch the raw API payload for a Companion button location."""
     _validate_button_coords(page, row, column)
     result = await _client().get_button(page, row, column)
+    if result.get("status_code") == 404:
+        return _compat_error(
+            "This Companion build no longer exposes a readable button GET endpoint at /api/location/{page}/{row}/{column}.",
+            path=result["path"],
+            status_code=result["status_code"],
+        )
     return _json(result)
 
 
@@ -363,11 +391,7 @@ async def set_step(page: int, row: int, column: int, step: int) -> str:
     """Set the current step of a button action sequence."""
     _validate_button_coords(page, row, column)
     _validate_step(step)
-    result = await _client().request(
-        "POST",
-        f"/api/location/{page}/{row}/{column}/step",
-        body={"step": step},
-    )
+    result = await _client().set_step(page, row, column, step)
     return _json(result)
 
 
@@ -443,6 +467,12 @@ async def set_button_style(
 async def set_custom_variable(name: str, value: str) -> str:
     """Set the value of a Companion custom variable."""
     result = await _client().set_variable(name, value)
+    if result.get("status_code") == 404:
+        return _compat_error(
+            "This Companion build does not accept custom-variable writes at /api/custom-variable/{name}/value.",
+            path=result["path"],
+            status_code=result["status_code"],
+        )
     return _json(result)
 
 

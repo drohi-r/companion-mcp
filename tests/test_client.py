@@ -91,7 +91,7 @@ async def test_button_action_calls_correct_path():
 
 
 @pytest.mark.asyncio
-async def test_set_style_sends_json_body():
+async def test_set_style_uses_query_params():
     client = CompanionClient(CompanionConfig())
     response = MagicMock()
     response.headers = {"content-type": "text/plain"}
@@ -108,4 +108,22 @@ async def test_set_style_sends_json_body():
         await client.set_style(1, 0, 0, text="GO", bgcolor="ff0000")
 
     call_kwargs = async_client.request.call_args
-    assert call_kwargs[1]["json"] == {"text": "GO", "bgcolor": "ff0000"}
+    assert call_kwargs[0][1] == "http://127.0.0.1:8000/api/location/1/0/0/style?text=GO&bgcolor=ff0000"
+
+
+@pytest.mark.asyncio
+async def test_set_step_uses_query_param():
+    client = CompanionClient(CompanionConfig())
+    response = MagicMock()
+    response.headers = {"content-type": "text/plain"}
+    response.text = ""
+    response.is_success = True
+    response.status_code = 204
+
+    async_client = MagicMock()
+    async_client.request = AsyncMock(return_value=response)
+
+    with patch("companion_mcp.client.httpx.AsyncClient", return_value=async_client):
+        result = await client.set_step(1, 2, 3, 4)
+
+    assert result["path"] == "/api/location/1/2/3/step?step=4"

@@ -24,7 +24,7 @@ async def test_health_check(mock_client_factory):
 
     result = json.loads(await health_check())
     assert result["ok"] is True
-    assert result["probe_path"] == "/api/surfaces"
+    assert result["probe_path"] == "/"
 
 
 @pytest.mark.asyncio
@@ -42,6 +42,19 @@ async def test_list_surfaces(mock_client_factory):
 
 @pytest.mark.asyncio
 @patch("companion_mcp.server._client")
+async def test_list_surfaces_returns_compat_error_on_404(mock_client_factory):
+    from companion_mcp.server import list_surfaces
+    fake = MagicMock()
+    fake.list_surfaces = AsyncMock(return_value={"ok": False, "status_code": 404, "path": "/api/surfaces"})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await list_surfaces())
+    assert result["blocked"] is True
+    assert result["compatibility"] == "current_companion_version"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
 async def test_get_button_info(mock_client_factory):
     from companion_mcp.server import get_button_info
     fake = MagicMock()
@@ -51,6 +64,19 @@ async def test_get_button_info(mock_client_factory):
     result = json.loads(await get_button_info(1, 0, 0))
     assert result["ok"] is True
     assert result["body"]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_get_button_info_returns_compat_error_on_404(mock_client_factory):
+    from companion_mcp.server import get_button_info
+    fake = MagicMock()
+    fake.get_button = AsyncMock(return_value={"ok": False, "status_code": 404, "path": "/api/location/1/0/0"})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await get_button_info(1, 0, 0))
+    assert result["blocked"] is True
+    assert result["compatibility"] == "current_companion_version"
 
 
 @pytest.mark.asyncio
@@ -141,6 +167,19 @@ async def test_set_custom_variable(mock_client_factory):
 
     result = json.loads(await set_custom_variable("show_name", "Nobo Winter"))
     assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_set_custom_variable_returns_compat_error_on_404(mock_client_factory):
+    from companion_mcp.server import set_custom_variable
+    fake = MagicMock()
+    fake.set_variable = AsyncMock(return_value={"ok": False, "status_code": 404, "path": "/api/custom-variable/show_name/value"})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await set_custom_variable("show_name", "Nobo Winter"))
+    assert result["blocked"] is True
+    assert result["compatibility"] == "current_companion_version"
 
 
 @pytest.mark.asyncio

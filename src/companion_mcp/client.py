@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -64,8 +65,12 @@ class CompanionClient:
         return await self.request("POST", f"/api/location/{page}/{row}/{column}/{action}")
 
     async def set_style(self, page: int, row: int, column: int, **style: Any) -> dict[str, Any]:
-        """Set button style properties (text, color, bgcolor, size)."""
-        return await self.request("POST", f"/api/location/{page}/{row}/{column}/style", body=style)
+        """Set button style properties using Companion's query-based style API."""
+        params = {key: value for key, value in style.items() if value not in (None, "")}
+        path = f"/api/location/{page}/{row}/{column}/style"
+        if params:
+            path = f"{path}?{urlencode(params)}"
+        return await self.request("POST", path)
 
     async def get_variable(self, path: str) -> dict[str, Any]:
         """Get a custom or module variable value."""
@@ -78,6 +83,10 @@ class CompanionClient:
             f"/api/custom-variable/{name}/value",
             body=value,
         )
+
+    async def set_step(self, page: int, row: int, column: int, step: int) -> dict[str, Any]:
+        """Set the active step using Companion's query-based endpoint."""
+        return await self.request("POST", f"/api/location/{page}/{row}/{column}/step?step={step}")
 
     async def get_button(self, page: int, row: int, column: int) -> dict[str, Any]:
         """Read the raw button payload for a location."""
