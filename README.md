@@ -8,7 +8,7 @@
   <a href="https://github.com/drohi-r/companion-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-orange?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=for-the-badge" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/MCP_Tools-53-14B8A6?style=for-the-badge" alt="53 MCP Tools">
-  <img src="https://img.shields.io/badge/Tests-69-14B8A6?style=for-the-badge" alt="69 Tests">
+  <img src="https://img.shields.io/badge/Tests-74-14B8A6?style=for-the-badge" alt="74 Tests">
 </p>
 
 An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 53 tools covering verified button control, styling, page discovery, runtime summaries, inventory diffing, checkpointed rollback/restore workflows, preset management, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
