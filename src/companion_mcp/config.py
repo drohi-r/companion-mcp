@@ -21,6 +21,7 @@ class CompanionConfig:
     port: int = 8000
     timeout_s: float = 10.0
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+    write_enabled: bool = True
 
     @property
     def base_url(self) -> str:
@@ -46,6 +47,15 @@ def _parse_allowed_hosts(env_name: str, default: str) -> tuple[str, ...]:
     return hosts
 
 
+def _parse_bool(env_name: str, default: str) -> bool:
+    raw = os.getenv(env_name, default).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{env_name}={raw!r} is not a valid boolean")
+
+
 def _validate_allowed_host(host: str, allowed_hosts: tuple[str, ...]) -> None:
     if "*" in allowed_hosts:
         return
@@ -61,6 +71,7 @@ def load_config() -> CompanionConfig:
         port=_parse_port("COMPANION_PORT", "8000"),
         timeout_s=_parse_timeout("COMPANION_TIMEOUT_S", "10.0"),
         allowed_hosts=_parse_allowed_hosts("COMPANION_ALLOWED_HOSTS", "127.0.0.1,localhost,::1"),
+        write_enabled=_parse_bool("COMPANION_WRITE_ENABLED", "1"),
     )
     _validate_allowed_host(config.host, config.allowed_hosts)
     return config

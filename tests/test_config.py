@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import patch
 
 from companion_mcp.config import CompanionConfig, load_config, _parse_port
-from companion_mcp.config import _parse_timeout, _parse_allowed_hosts
+from companion_mcp.config import _parse_timeout, _parse_allowed_hosts, _parse_bool
 
 
 def test_default_config():
@@ -11,6 +11,7 @@ def test_default_config():
     assert config.host == "127.0.0.1"
     assert config.port == 8000
     assert config.timeout_s == 10.0
+    assert config.write_enabled is True
     assert config.base_url == "http://127.0.0.1:8000"
 
 
@@ -78,6 +79,13 @@ def test_parse_timeout_rejects_non_positive():
 def test_parse_allowed_hosts():
     with patch.dict(os.environ, {"TEST_ALLOWED_HOSTS": "127.0.0.1, companion.local"}):
         assert _parse_allowed_hosts("TEST_ALLOWED_HOSTS", "") == ("127.0.0.1", "companion.local")
+
+
+def test_parse_bool():
+    with patch.dict(os.environ, {"TEST_BOOL": "true"}):
+        assert _parse_bool("TEST_BOOL", "0") is True
+    with patch.dict(os.environ, {"TEST_BOOL": "0"}):
+        assert _parse_bool("TEST_BOOL", "1") is False
 
 
 def test_load_config_rejects_disallowed_host():

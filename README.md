@@ -32,6 +32,7 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `COMPANION_PORT` | `8000` | HTTP API port |
 | `COMPANION_TIMEOUT_S` | `10.0` | HTTP timeout in seconds |
 | `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for Companion targets. Set `*` to allow any host. |
+| `COMPANION_WRITE_ENABLED` | `1` | Set to `0` for read-only mode when you want to expose the MCP more safely. |
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
 
 ## Tools
@@ -59,6 +60,7 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `get_custom_variable` | Read a Companion custom variable |
 | `set_custom_variable` | Write a Companion custom variable |
 | `get_module_variable` | Read a variable from a Companion module connection |
+| `snapshot_custom_variables` | Read a named list of custom variables in one call |
 
 ### Discovery / health
 | Tool | What it does |
@@ -67,6 +69,7 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `list_surfaces` | List connected control surfaces |
 | `get_button_info` | Read raw API payload for a specific button location |
 | `get_page_grid` | Read a rectangular page region by page/row/column |
+| `export_page_layout` | Export a page region into a reusable layout payload |
 
 ### Batch operations
 | Tool | What it does |
@@ -76,6 +79,8 @@ Make sure Companion is running with the HTTP API enabled (default port 8000).
 | `label_button_grid` | Label a grid of buttons from a flat list |
 | `preview_page_style` | Validate and preview a page-style batch without writing |
 | `preview_label_button_grid` | Resolve labels into coordinates without writing |
+| `preview_button_template` | Place a reusable relative template at a page origin without writing |
+| `apply_button_template` | Apply a reusable relative template at a page origin |
 
 ### System
 | Tool | What it does |
@@ -129,6 +134,7 @@ uv run python -m pytest -v
 
 - By default the MCP only permits Companion targets on `127.0.0.1`, `localhost`, or `::1`.
 - To control a LAN-hosted Companion instance, add it to `COMPANION_ALLOWED_HOSTS`.
+- If you want to expose the MCP in a less trusted environment, set `COMPANION_WRITE_ENABLED=0` to force read-only behavior.
 - Preview tools are intended for agent planning before batch writes.
 
 ## License

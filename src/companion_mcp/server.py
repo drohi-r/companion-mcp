@@ -57,6 +57,20 @@ def _handle_errors(func):
     return wrapper
 
 
+def _require_writes_enabled(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        config = load_config()
+        if not config.write_enabled:
+            return _error(
+                "Companion write operations are disabled by COMPANION_WRITE_ENABLED=0.",
+                blocked=True,
+            )
+        return await func(*args, **kwargs)
+
+    return wrapper
+
+
 def _validate_page(page: int) -> None:
     if page < 1:
         raise ValueError("page must be >= 1")
@@ -106,6 +120,31 @@ def _normalize_style_payload(raw_style: dict[str, Any]) -> dict[str, Any]:
     return style
 
 
+def _resolve_template_entries(
+    page: int,
+    template: list[dict[str, Any]],
+    origin_row: int,
+    origin_column: int,
+) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    for i, entry in enumerate(template):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Template entry at index {i} must be an object.")
+        if "row" not in entry or "column" not in entry:
+            raise ValueError(f"Template entry at index {i} must include row and column.")
+        row = origin_row + int(entry["row"])
+        column = origin_column + int(entry["column"])
+        _validate_button_coords(page, row, column)
+        style = _normalize_style_payload(entry)
+        resolved.append({
+            "page": page,
+            "row": row,
+            "column": column,
+            "style": style,
+        })
+    return resolved
+
+
 # ============================================================
 # Read Tools
 # ============================================================
@@ -121,6 +160,7 @@ async def get_server_config() -> str:
         "port": config.port,
         "timeout_s": config.timeout_s,
         "allowed_hosts": list(config.allowed_hosts),
+        "write_enabled": config.write_enabled,
         "base_url": config.base_url,
     })
 
@@ -213,6 +253,54 @@ async def get_page_grid(page: int, rows: int = 4, columns: int = 8, include_empt
     })
 
 
+@mcp.tool()
+@_handle_errors
+async def export_page_layout(page: int, rows: int = 4, columns: int = 8, include_empty: bool = False) -> str:
+    """Export a page region as a reusable layout payload."""
+    raw = json.loads(await get_page_grid(page, rows=rows, columns=columns, include_empty=include_empty))
+    buttons = []
+    for button in raw.get("buttons", []):
+        body = button.get("body")
+        buttons.append({
+            "row": button["row"],
+            "column": button["column"],
+            "body": body,
+        })
+    return _json({
+        "page": page,
+        "rows": rows,
+        "columns": columns,
+        "include_empty": include_empty,
+        "button_count": len(buttons),
+        "layout": buttons,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def snapshot_custom_variables(names_json: str) -> str:
+    """Read a named set of custom variables into one snapshot payload."""
+    names = json.loads(names_json)
+    if not isinstance(names, list):
+        raise ValueError("names_json must be a JSON array of variable names.")
+
+    client = _client()
+    variables: list[dict[str, Any]] = []
+    for i, name in enumerate(names):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Variable at index {i} must be a non-empty string.")
+        result = await client.get_variable(f"/api/custom-variable/{name}/value")
+        variables.append({
+            "name": name,
+            "result": result,
+        })
+
+    return _json({
+        "count": len(variables),
+        "variables": variables,
+    })
+
+
 # ============================================================
 # Button Actions
 # ============================================================
@@ -220,6 +308,7 @@ async def get_page_grid(page: int, rows: int = 4, columns: int = 8, include_empt
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def press_button(page: int, row: int, column: int) -> str:
     """Press and release a button (runs both down and up actions)."""
     _validate_button_coords(page, row, column)
@@ -229,6 +318,7 @@ async def press_button(page: int, row: int, column: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def hold_button(page: int, row: int, column: int) -> str:
     """Press and hold a button (runs down actions only). Use release_button to let go."""
     _validate_button_coords(page, row, column)
@@ -238,6 +328,7 @@ async def hold_button(page: int, row: int, column: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def release_button(page: int, row: int, column: int) -> str:
     """Release a held button (runs up actions)."""
     _validate_button_coords(page, row, column)
@@ -247,6 +338,7 @@ async def release_button(page: int, row: int, column: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def rotate_left(page: int, row: int, column: int) -> str:
     """Trigger a left rotation on an encoder button."""
     _validate_button_coords(page, row, column)
@@ -256,6 +348,7 @@ async def rotate_left(page: int, row: int, column: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def rotate_right(page: int, row: int, column: int) -> str:
     """Trigger a right rotation on an encoder button."""
     _validate_button_coords(page, row, column)
@@ -265,6 +358,7 @@ async def rotate_right(page: int, row: int, column: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def set_step(page: int, row: int, column: int, step: int) -> str:
     """Set the current step of a button action sequence."""
     _validate_button_coords(page, row, column)
@@ -284,6 +378,7 @@ async def set_step(page: int, row: int, column: int, step: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def set_button_text(page: int, row: int, column: int, text: str) -> str:
     """Change the text displayed on a button."""
     _validate_button_coords(page, row, column)
@@ -293,6 +388,7 @@ async def set_button_text(page: int, row: int, column: int, text: str) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def set_button_color(
     page: int,
     row: int,
@@ -316,6 +412,7 @@ async def set_button_color(
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def set_button_style(
     page: int,
     row: int,
@@ -342,6 +439,7 @@ async def set_button_style(
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def set_custom_variable(name: str, value: str) -> str:
     """Set the value of a Companion custom variable."""
     result = await _client().set_variable(name, value)
@@ -355,6 +453,7 @@ async def set_custom_variable(name: str, value: str) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def rescan_surfaces() -> str:
     """Rescan for connected USB surfaces (Stream Deck, etc.)."""
     result = await _client().request("POST", "/api/surfaces/rescan")
@@ -368,6 +467,7 @@ async def rescan_surfaces() -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def press_button_sequence(buttons_json: str, delay_ms: int = 100) -> str:
     """Press multiple buttons in sequence with a configurable delay between each.
 
@@ -395,6 +495,7 @@ async def press_button_sequence(buttons_json: str, delay_ms: int = 100) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def set_page_style(page: int, buttons_json: str) -> str:
     """Batch-set style on multiple buttons on a page.
 
@@ -420,6 +521,7 @@ async def set_page_style(page: int, buttons_json: str) -> str:
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def label_button_grid(page: int, labels_json: str, columns: int = 8) -> str:
     """Label a grid of buttons from a flat list of names.
 
@@ -510,6 +612,71 @@ async def preview_label_button_grid(page: int, labels_json: str, columns: int = 
     })
 
 
+@mcp.tool()
+@_handle_errors
+async def preview_button_template(
+    page: int,
+    template_json: str,
+    origin_row: int = 0,
+    origin_column: int = 0,
+) -> str:
+    """Preview a reusable button template placed at an origin on a page."""
+    _validate_page(page)
+    _validate_row_column(origin_row, origin_column)
+    template = json.loads(template_json)
+    if not isinstance(template, list):
+        raise ValueError("template_json must be a JSON array of button template entries.")
+    resolved = _resolve_template_entries(page, template, origin_row, origin_column)
+    return _json({
+        "action": "preview_button_template",
+        "page": page,
+        "origin_row": origin_row,
+        "origin_column": origin_column,
+        "count": len(resolved),
+        "writes_companion": False,
+        "preview": resolved,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def apply_button_template(
+    page: int,
+    template_json: str,
+    origin_row: int = 0,
+    origin_column: int = 0,
+) -> str:
+    """Apply a reusable button template at an origin on a page."""
+    _validate_page(page)
+    _validate_row_column(origin_row, origin_column)
+    template = json.loads(template_json)
+    if not isinstance(template, list):
+        raise ValueError("template_json must be a JSON array of button template entries.")
+    resolved = _resolve_template_entries(page, template, origin_row, origin_column)
+
+    client = _client()
+    results: list[dict[str, Any]] = []
+    for entry in resolved:
+        result = await client.set_style(entry["page"], entry["row"], entry["column"], **entry["style"])
+        results.append({
+            "page": entry["page"],
+            "row": entry["row"],
+            "column": entry["column"],
+            "style": entry["style"],
+            "result": result,
+        })
+
+    return _json({
+        "action": "apply_button_template",
+        "page": page,
+        "origin_row": origin_row,
+        "origin_column": origin_column,
+        "count": len(results),
+        "results": results,
+    })
+
+
 # ============================================================
 # Legacy Support
 # ============================================================
@@ -517,6 +684,7 @@ async def preview_label_button_grid(page: int, labels_json: str, columns: int = 
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
 async def press_bank_button(page: int, button: int) -> str:
     """Press a button using the legacy bank API (deprecated but still works). button is 0-indexed."""
     _validate_page(page)

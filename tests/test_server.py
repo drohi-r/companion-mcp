@@ -10,6 +10,7 @@ async def test_get_server_config():
     assert result["host"] == "127.0.0.1"
     assert result["port"] == 8000
     assert result["timeout_s"] == 10.0
+    assert result["write_enabled"] is True
     assert "base_url" in result
 
 
@@ -69,6 +70,33 @@ async def test_get_page_grid(mock_client_factory):
 
 
 @pytest.mark.asyncio
+@patch("companion_mcp.server.get_page_grid")
+async def test_export_page_layout(mock_get_page_grid):
+    from companion_mcp.server import export_page_layout
+    mock_get_page_grid.return_value = json.dumps({
+        "buttons": [{"row": 0, "column": 0, "body": {"text": "GO"}}],
+    })
+    result = json.loads(await export_page_layout(1, rows=1, columns=1))
+    assert result["button_count"] == 1
+    assert result["layout"][0]["body"]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_snapshot_custom_variables(mock_client_factory):
+    from companion_mcp.server import snapshot_custom_variables
+    fake = MagicMock()
+    fake.get_variable = AsyncMock(side_effect=[
+        {"ok": True, "body": "ShowA"},
+        {"ok": True, "body": "128"},
+    ])
+    mock_client_factory.return_value = fake
+    result = json.loads(await snapshot_custom_variables(json.dumps(["show_name", "bpm"])))
+    assert result["count"] == 2
+    assert result["variables"][0]["name"] == "show_name"
+
+
+@pytest.mark.asyncio
 @patch("companion_mcp.server._client")
 async def test_press_button(mock_client_factory):
     from companion_mcp.server import press_button
@@ -79,6 +107,15 @@ async def test_press_button(mock_client_factory):
     result = json.loads(await press_button(1, 0, 0))
     assert result["ok"] is True
     fake.button_action.assert_awaited_once_with(1, 0, 0, "press")
+
+
+@pytest.mark.asyncio
+async def test_write_tool_blocked_when_writes_disabled(monkeypatch):
+    from companion_mcp.server import press_button
+    monkeypatch.setenv("COMPANION_WRITE_ENABLED", "0")
+    result = json.loads(await press_button(1, 0, 0))
+    assert result["blocked"] is True
+    assert "write operations are disabled" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -173,6 +210,33 @@ async def test_preview_label_button_grid():
     assert result["labeled"] == 2
     assert result["preview"][1]["row"] == 1
     assert result["preview"][1]["column"] == 0
+
+
+@pytest.mark.asyncio
+async def test_preview_button_template():
+    from companion_mcp.server import preview_button_template
+    template = json.dumps([
+        {"row": 0, "column": 0, "text": "GO", "bgcolor": "#00ff00"},
+        {"row": 0, "column": 1, "text": "STOP"},
+    ])
+    result = json.loads(await preview_button_template(2, template, origin_row=1, origin_column=2))
+    assert result["writes_companion"] is False
+    assert result["preview"][0]["row"] == 1
+    assert result["preview"][0]["column"] == 2
+    assert result["preview"][0]["style"]["bgcolor"] == "00ff00"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_apply_button_template(mock_client_factory):
+    from companion_mcp.server import apply_button_template
+    fake = MagicMock()
+    fake.set_style = AsyncMock(return_value={"ok": True})
+    mock_client_factory.return_value = fake
+    template = json.dumps([{"row": 0, "column": 0, "text": "GO"}])
+    result = json.loads(await apply_button_template(1, template))
+    assert result["count"] == 1
+    fake.set_style.assert_awaited_once_with(1, 0, 0, text="GO")
 
 
 @pytest.mark.asyncio
