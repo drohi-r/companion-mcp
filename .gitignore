@@ -1,3 +1,4 @@
 .companion-snapshots/
 .companion-presets/
+.claude/
 __pycache__/
