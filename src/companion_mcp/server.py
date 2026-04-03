@@ -173,12 +173,12 @@ async def get_server_config() -> str:
 @_handle_errors
 async def get_custom_variable(name: str) -> str:
     """Get the value of a Companion custom variable."""
-    result = await _client().get_variable(f"/api/custom-variable/{name}/value")
-    if result.get("status_code") == 404:
+    result = await _client().get_custom_variable_current(name)
+    if not result.get("ok") and result.get("error_code") == "NOT_FOUND":
         return _compat_error(
-            "This Companion build does not expose readable custom-variable HTTP endpoints in the format this MCP expects.",
-            path=result["path"],
-            status_code=result["status_code"],
+            "This Companion build does not expose the expected custom-variable tRPC procedure.",
+            path=result.get("path"),
+            error=result.get("error"),
         )
     return _json(result)
 
@@ -187,12 +187,12 @@ async def get_custom_variable(name: str) -> str:
 @_handle_errors
 async def get_module_variable(connection: str, name: str) -> str:
     """Get a module variable value from a named Companion connection."""
-    result = await _client().get_variable(f"/api/variable/{connection}/{name}/value")
-    if result.get("status_code") == 404:
+    result = await _client().get_module_variable_current(connection, name)
+    if not result.get("ok") and result.get("error_code") == "NOT_FOUND":
         return _compat_error(
-            "This Companion build does not expose readable module-variable HTTP endpoints in the format this MCP expects.",
-            path=result["path"],
-            status_code=result["status_code"],
+            "This Companion build does not expose the expected module-variable tRPC procedure.",
+            path=result.get("path"),
+            error=result.get("error"),
         )
     return _json(result)
 
@@ -203,15 +203,18 @@ async def health_check() -> str:
     """Probe Companion reachability and return API status details."""
     config = load_config()
     result = await _client().request("GET", "/")
+    app_info = await _client().get_app_info()
     return _json({
         "ok": result["ok"],
         "host": config.host,
         "port": config.port,
         "base_url": config.base_url,
+        "ws_base_url": config.ws_base_url,
         "probe_path": "/",
         "status_code": result["status_code"],
         "content_type": result["content_type"],
         "body": result["body"],
+        "app_info": app_info,
     })
 
 
@@ -220,11 +223,11 @@ async def health_check() -> str:
 async def list_surfaces() -> str:
     """List connected Companion control surfaces."""
     result = await _client().list_surfaces()
-    if result.get("status_code") == 404:
+    if not result.get("ok") and result.get("error_code") == "NOT_FOUND":
         return _compat_error(
-            "This Companion build does not expose a readable /api/surfaces endpoint. Surface discovery needs a compatibility update.",
-            path=result["path"],
-            status_code=result["status_code"],
+            "This Companion build does not expose the expected surface discovery tRPC procedure.",
+            path=result.get("path"),
+            error=result.get("error"),
         )
     return _json(result)
 
@@ -234,12 +237,12 @@ async def list_surfaces() -> str:
 async def get_button_info(page: int, row: int, column: int) -> str:
     """Fetch the raw API payload for a Companion button location."""
     _validate_button_coords(page, row, column)
-    result = await _client().get_button(page, row, column)
-    if result.get("status_code") == 404:
+    result = await _client().get_button_info_current(page, row, column)
+    if not result.get("ok") and result.get("error_code") == "NOT_FOUND":
         return _compat_error(
-            "This Companion build no longer exposes a readable button GET endpoint at /api/location/{page}/{row}/{column}.",
-            path=result["path"],
-            status_code=result["status_code"],
+            "This Companion build does not expose the expected control inspection tRPC procedure.",
+            path=result.get("path"),
+            error=result.get("error"),
         )
     return _json(result)
 
@@ -254,31 +257,15 @@ async def get_page_grid(page: int, rows: int = 4, columns: int = 8, include_empt
     if columns <= 0:
         raise ValueError("columns must be >= 1")
 
-    client = _client()
-    buttons: list[dict[str, Any]] = []
-    for row in range(rows):
-        for column in range(columns):
-            result = await client.get_button(page, row, column)
-            body = result.get("body")
-            is_empty = body in ("", None, {}, [])
-            if include_empty or not is_empty:
-                buttons.append({
-                    "page": page,
-                    "row": row,
-                    "column": column,
-                    "ok": result.get("ok", False),
-                    "status_code": result.get("status_code"),
-                    "body": body,
-                })
-
-    return _json({
-        "page": page,
-        "rows": rows,
-        "columns": columns,
-        "include_empty": include_empty,
-        "count": len(buttons),
-        "buttons": buttons,
-    })
+    result = await _client().get_page_grid_current(page, rows, columns, include_empty)
+    if not result.get("ok") and result.get("error_code") == "NOT_FOUND":
+        return _compat_error(
+            "This Companion build does not expose the expected page or preview tRPC procedures.",
+            path=result.get("path"),
+            error=result.get("error"),
+        )
+    body = result.get("body", {})
+    return _json(body)
 
 
 @mcp.tool()
@@ -312,12 +299,11 @@ async def snapshot_custom_variables(names_json: str) -> str:
     if not isinstance(names, list):
         raise ValueError("names_json must be a JSON array of variable names.")
 
-    client = _client()
     variables: list[dict[str, Any]] = []
     for i, name in enumerate(names):
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"Variable at index {i} must be a non-empty string.")
-        result = await client.get_variable(f"/api/custom-variable/{name}/value")
+        result = await _client().get_custom_variable_current(name)
         variables.append({
             "name": name,
             "result": result,

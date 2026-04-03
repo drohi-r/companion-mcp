@@ -20,11 +20,13 @@ async def test_health_check(mock_client_factory):
     from companion_mcp.server import health_check
     fake = MagicMock()
     fake.request = AsyncMock(return_value={"ok": True, "status_code": 200, "content_type": "application/json", "body": []})
+    fake.get_app_info = AsyncMock(return_value={"ok": True, "body": {"appVersion": "4.2.6"}})
     mock_client_factory.return_value = fake
 
     result = json.loads(await health_check())
     assert result["ok"] is True
     assert result["probe_path"] == "/"
+    assert result["app_info"]["body"]["appVersion"] == "4.2.6"
 
 
 @pytest.mark.asyncio
@@ -32,12 +34,12 @@ async def test_health_check(mock_client_factory):
 async def test_list_surfaces(mock_client_factory):
     from companion_mcp.server import list_surfaces
     fake = MagicMock()
-    fake.list_surfaces = AsyncMock(return_value={"ok": True, "body": [{"id": "streamdeck-xl"}]})
+    fake.list_surfaces = AsyncMock(return_value={"ok": True, "body": [{"type": "init", "info": {"streamdeck-xl": {}}}]})
     mock_client_factory.return_value = fake
 
     result = json.loads(await list_surfaces())
     assert result["ok"] is True
-    assert result["body"][0]["id"] == "streamdeck-xl"
+    assert "streamdeck-xl" in result["body"][0]["info"]
 
 
 @pytest.mark.asyncio
@@ -45,7 +47,7 @@ async def test_list_surfaces(mock_client_factory):
 async def test_list_surfaces_returns_compat_error_on_404(mock_client_factory):
     from companion_mcp.server import list_surfaces
     fake = MagicMock()
-    fake.list_surfaces = AsyncMock(return_value={"ok": False, "status_code": 404, "path": "/api/surfaces"})
+    fake.list_surfaces = AsyncMock(return_value={"ok": False, "error_code": "NOT_FOUND", "path": "surfaces.watchSurfaces"})
     mock_client_factory.return_value = fake
 
     result = json.loads(await list_surfaces())
@@ -58,12 +60,12 @@ async def test_list_surfaces_returns_compat_error_on_404(mock_client_factory):
 async def test_get_button_info(mock_client_factory):
     from companion_mcp.server import get_button_info
     fake = MagicMock()
-    fake.get_button = AsyncMock(return_value={"ok": True, "body": {"text": "GO"}})
+    fake.get_button_info_current = AsyncMock(return_value={"ok": True, "body": {"control": {"config": {"text": "GO"}}}})
     mock_client_factory.return_value = fake
 
     result = json.loads(await get_button_info(1, 0, 0))
     assert result["ok"] is True
-    assert result["body"]["text"] == "GO"
+    assert result["body"]["control"]["config"]["text"] == "GO"
 
 
 @pytest.mark.asyncio
@@ -71,7 +73,7 @@ async def test_get_button_info(mock_client_factory):
 async def test_get_button_info_returns_compat_error_on_404(mock_client_factory):
     from companion_mcp.server import get_button_info
     fake = MagicMock()
-    fake.get_button = AsyncMock(return_value={"ok": False, "status_code": 404, "path": "/api/location/1/0/0"})
+    fake.get_button_info_current = AsyncMock(return_value={"ok": False, "error_code": "NOT_FOUND", "path": "controls.watchControl"})
     mock_client_factory.return_value = fake
 
     result = json.loads(await get_button_info(1, 0, 0))
@@ -84,15 +86,22 @@ async def test_get_button_info_returns_compat_error_on_404(mock_client_factory):
 async def test_get_page_grid(mock_client_factory):
     from companion_mcp.server import get_page_grid
     fake = MagicMock()
-    fake.get_button = AsyncMock(side_effect=[
-        {"ok": True, "status_code": 200, "body": {"text": "GO"}},
-        {"ok": True, "status_code": 200, "body": ""},
-    ])
+    fake.get_page_grid_current = AsyncMock(return_value={
+        "ok": True,
+        "body": {
+            "page": 1,
+            "rows": 1,
+            "columns": 2,
+            "include_empty": False,
+            "count": 1,
+            "buttons": [{"page": 1, "row": 0, "column": 0, "control": {"config": {"text": "GO"}}}],
+        },
+    })
     mock_client_factory.return_value = fake
 
     result = json.loads(await get_page_grid(1, rows=1, columns=2))
     assert result["count"] == 1
-    assert result["buttons"][0]["body"]["text"] == "GO"
+    assert result["buttons"][0]["control"]["config"]["text"] == "GO"
 
 
 @pytest.mark.asyncio
@@ -112,9 +121,9 @@ async def test_export_page_layout(mock_get_page_grid):
 async def test_snapshot_custom_variables(mock_client_factory):
     from companion_mcp.server import snapshot_custom_variables
     fake = MagicMock()
-    fake.get_variable = AsyncMock(side_effect=[
-        {"ok": True, "body": "ShowA"},
-        {"ok": True, "body": "128"},
+    fake.get_custom_variable_current = AsyncMock(side_effect=[
+        {"ok": True, "body": {"name": "show_name", "value": "ShowA", "exists": True}},
+        {"ok": True, "body": {"name": "bpm", "value": "128", "exists": True}},
     ])
     mock_client_factory.return_value = fake
     result = json.loads(await snapshot_custom_variables(json.dumps(["show_name", "bpm"])))

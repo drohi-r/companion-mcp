@@ -127,3 +127,72 @@ async def test_set_step_uses_query_param():
         result = await client.set_step(1, 2, 3, 4)
 
     assert result["path"] == "/api/location/1/2/3/step?step=4"
+
+
+def test_control_id_from_pages_snapshot():
+    client = CompanionClient(CompanionConfig())
+    pages = {
+        "order": ["page-a"],
+        "pages": {
+            "page-a": {
+                "controls": {
+                    "0": {"0": "bank:abc"},
+                }
+            }
+        },
+    }
+    assert client._control_id_from_pages_snapshot(pages, 1, 0, 0) == "bank:abc"
+    assert client._control_id_from_pages_snapshot(pages, 1, 0, 1) is None
+
+
+@pytest.mark.asyncio
+async def test_get_custom_variable_current_extracts_value():
+    client = CompanionClient(CompanionConfig())
+    client.get_variable_values = AsyncMock(return_value={"ok": True, "body": {"show_name": "Nobo"}})
+    result = await client.get_custom_variable_current("show_name")
+    assert result["body"]["value"] == "Nobo"
+    assert result["body"]["exists"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_button_info_current_combines_control_and_preview():
+    client = CompanionClient(CompanionConfig())
+    client.get_pages_snapshot = AsyncMock(return_value={
+        "ok": True,
+        "body": {
+            "order": ["page-a"],
+            "pages": {
+                "page-a": {
+                    "controls": {"0": {"0": "bank:abc"}},
+                }
+            },
+        },
+    })
+    client.get_preview_location = AsyncMock(return_value={"ok": True, "body": {"image": "data:image/png;base64,abc"}})
+    client.get_control_snapshot = AsyncMock(return_value={"ok": True, "body": {"type": "init", "config": {"text": "GO"}}})
+
+    result = await client.get_button_info_current(1, 0, 0)
+    assert result["body"]["control_id"] == "bank:abc"
+    assert result["body"]["control"]["config"]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+async def test_get_page_grid_current_skips_empty_buttons():
+    client = CompanionClient(CompanionConfig())
+    client.get_pages_snapshot = AsyncMock(return_value={
+        "ok": True,
+        "body": {
+            "order": ["page-a"],
+            "pages": {
+                "page-a": {
+                    "controls": {"0": {"0": "bank:abc"}},
+                }
+            },
+        },
+    })
+    client.get_preview_location = AsyncMock(return_value={"ok": True, "body": {"image": "data:image/png;base64,abc"}})
+    client.get_control_snapshot = AsyncMock(return_value={"ok": True, "body": {"type": "init"}})
+
+    result = await client.get_page_grid_current(1, 1, 2, include_empty=False)
+    assert result["body"]["count"] == 1
+    assert result["body"]["buttons"][0]["control_id"] == "bank:abc"

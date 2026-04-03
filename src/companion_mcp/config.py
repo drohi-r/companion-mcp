@@ -27,6 +27,10 @@ class CompanionConfig:
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
+    @property
+    def ws_base_url(self) -> str:
+        return f"ws://{self.host}:{self.port}"
+
 
 def _parse_timeout(env_name: str, default: str) -> float:
     raw = os.getenv(env_name, default)
