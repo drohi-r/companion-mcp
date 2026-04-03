@@ -7,11 +7,11 @@
 <p align="center">
   <a href="https://github.com/drohi-r/companion-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-orange?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=for-the-badge" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/MCP_Tools-28-14B8A6?style=for-the-badge" alt="28 MCP Tools">
-  <img src="https://img.shields.io/badge/Tests-47-14B8A6?style=for-the-badge" alt="47 Tests">
+  <img src="https://img.shields.io/badge/MCP_Tools-34-14B8A6?style=for-the-badge" alt="34 MCP Tools">
+  <img src="https://img.shields.io/badge/Tests-55-14B8A6?style=for-the-badge" alt="55 Tests">
 </p>
 
-An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 28 tools covering button control, styling, page discovery, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
+An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 34 tools covering verified button control, styling, page discovery, runtime summaries, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
 
 Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
@@ -56,11 +56,15 @@ Safe, read-only tools for understanding the current state of Companion.
 | `health_check` | Probe Companion API reachability and return status |
 | `list_surfaces` | List connected control surfaces (Stream Deck, etc.) |
 | `get_button_info` | Read the current control and preview state for a specific button |
+| `get_button_runtime_summary` | Return a compact operator-oriented runtime summary for a button |
 | `get_page_grid` | Read a rectangular grid of buttons from a page |
+| `snapshot_page_inventory` | Export a page region with concise button summaries, style, feedback, and preview hashes |
+| `find_buttons` | Search a page region by visible text, control id, or control type |
 | `export_page_layout` | Export a page region as a reusable layout payload |
 | `get_custom_variable` | Read a Companion custom variable |
 | `get_module_variable` | Read a variable from a Companion module connection |
 | `snapshot_custom_variables` | Read a named list of custom variables in one call |
+| `verify_button_render_change` | Compare a current button preview hash to a previous one |
 
 ### Preview (plan before you write)
 
@@ -79,6 +83,7 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
 | Tool | What it does |
 |------|-------------|
 | `press_button` | Press and release a button |
+| `press_button_verified` | Press a button and poll for visible/runtime state change |
 | `hold_button` | Press and hold (down actions only) |
 | `release_button` | Release a held button (up actions) |
 | `rotate_left` | Rotate encoder left |
@@ -92,6 +97,7 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
 | `set_button_text` | Change button display text |
 | `set_button_color` | Change text and/or background color (6-digit hex) |
 | `set_button_style` | Set multiple style properties at once |
+| `set_button_style_verified` | Apply style changes and poll until the render catches up or the timeout expires |
 
 ### Batch operations
 
@@ -151,14 +157,24 @@ This server is designed for live show environments where accidental writes can d
 - **Host allowlisting** — only `127.0.0.1`, `localhost`, and `::1` are permitted by default. Add LAN hosts explicitly via `COMPANION_ALLOWED_HOSTS`.
 - **Write gating** — set `COMPANION_WRITE_ENABLED=0` to block all write operations. Read and preview tools remain available.
 - **Preview before apply** — every batch operation has a corresponding preview tool that validates inputs and shows exactly what will change, without touching Companion.
+- **Verified writes** — prefer `press_button_verified` and `set_button_style_verified` when you care about actual visible or runtime state changes, not just HTTP acceptance.
 - **Input validation** — page, row, column, color hex, delay bounds, and template structure are all validated before any API call is made. Invalid inputs return structured JSON errors, never raw exceptions.
 - **Error isolation** — all tools are wrapped in `_handle_errors`. Network failures, JSON parse errors, and validation failures return `{"ok": false, "error": "...", "blocked": true}` instead of crashing the MCP session.
+
+## Live behavior notes
+
+- A successful HTTP write does not always mean the button visibly changed immediately.
+- Current Companion builds can update stored style state first, then repaint the preview a short time later.
+- `set_button_style_verified` and `press_button_verified` include bounded polling so the MCP can distinguish:
+  - write accepted but nothing observable changed
+  - write accepted and the preview changed after a short delay
+  - write accepted and style state changed, but visible render still did not change
 
 ## Development
 
 ```bash
 uv sync
-uv run python -m pytest -v   # 47 tests
+uv run python -m pytest -v   # 55 tests
 ```
 
 ## License

@@ -157,6 +157,73 @@ def _resolve_template_entries(
     return resolved
 
 
+def _button_runtime_summary(button: dict[str, Any]) -> dict[str, Any]:
+    control = button.get("control") or {}
+    config = control.get("config") or {}
+    runtime = control.get("runtime") or {}
+    style_meta = button.get("style_meta") or {}
+    feedback_meta = button.get("feedback_meta") or {}
+    preview_meta = button.get("preview_meta") or {}
+    control_type = config.get("type")
+    current_step_id = runtime.get("current_step_id")
+    return {
+        "control_type": control_type,
+        "current_step_id": current_step_id,
+        "is_stepped": current_step_id not in (None, "", "0"),
+        "has_feedback_overrides": feedback_meta.get("style_may_be_feedback_controlled", False),
+        "visible_text": style_meta.get("text"),
+        "preview_sha256": preview_meta.get("image_sha256"),
+        "is_used": preview_meta.get("isUsed"),
+    }
+
+
+def _summarize_button(button: dict[str, Any]) -> dict[str, Any]:
+    control = button.get("control") or {}
+    config = control.get("config") or {}
+    return {
+        "page": button.get("page"),
+        "row": button.get("row"),
+        "column": button.get("column"),
+        "control_id": button.get("control_id"),
+        "exists": button.get("exists"),
+        "control_type": config.get("type"),
+        "style_meta": button.get("style_meta"),
+        "feedback_meta": button.get("feedback_meta"),
+        "runtime_summary": _button_runtime_summary(button),
+        "preview_meta": button.get("preview_meta"),
+    }
+
+
+async def _poll_button_info(
+    client: CompanionClient,
+    page: int,
+    row: int,
+    column: int,
+    *,
+    previous_preview_sha: str | None,
+    wait_ms: int,
+    poll_ms: int,
+) -> tuple[dict[str, Any], int]:
+    after = await client.get_button_info_current(page, row, column)
+    if not after.get("ok"):
+        return after, 1
+
+    polls = 1
+    if previous_preview_sha and wait_ms > 0:
+        elapsed = 0
+        while elapsed < wait_ms:
+            current_preview_sha = ((after.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
+            if current_preview_sha and current_preview_sha != previous_preview_sha:
+                break
+            await asyncio.sleep(poll_ms / 1000)
+            elapsed += poll_ms
+            polls += 1
+            after = await client.get_button_info_current(page, row, column)
+            if not after.get("ok"):
+                break
+    return after, polls
+
+
 # ============================================================
 # Read Tools
 # ============================================================
@@ -257,6 +324,30 @@ async def get_button_info(page: int, row: int, column: int) -> str:
 
 @mcp.tool()
 @_handle_errors
+async def get_button_runtime_summary(page: int, row: int, column: int) -> str:
+    """Return a compact runtime-oriented summary for a button."""
+    _validate_button_coords(page, row, column)
+    result = await _client().get_button_info_current(page, row, column)
+    if not result.get("ok"):
+        if result.get("error_code") == "NOT_FOUND":
+            return _compat_error(
+                "This Companion build does not expose the expected control inspection tRPC procedure.",
+                path=result.get("path"),
+                error=result.get("error"),
+            )
+        return _json(result)
+    body = result.get("body", {})
+    return _json({
+        "ok": True,
+        "page": page,
+        "row": row,
+        "column": column,
+        "runtime_summary": _button_runtime_summary(body),
+    })
+
+
+@mcp.tool()
+@_handle_errors
 async def verify_button_render_change(page: int, row: int, column: int, previous_sha256: str) -> str:
     """Compare the current button preview fingerprint to a previous preview hash."""
     _validate_button_coords(page, row, column)
@@ -317,7 +408,16 @@ async def set_button_style_verified(
         return _json(before)
 
     write_result = await client.set_style(page, row, column, **style)
-    after = await client.get_button_info_current(page, row, column)
+    before_preview_sha = ((before.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
+    after, polls = await _poll_button_info(
+        client,
+        page,
+        row,
+        column,
+        previous_preview_sha=before_preview_sha,
+        wait_ms=wait_ms,
+        poll_ms=poll_ms,
+    )
     if not after.get("ok"):
         return _json({
             "ok": False,
@@ -327,21 +427,6 @@ async def set_button_style_verified(
             "write_result": write_result,
             "after": after,
         })
-
-    before_preview_sha = ((before.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
-    polls = 1
-    if before_preview_sha and wait_ms > 0:
-        elapsed = 0
-        while elapsed < wait_ms:
-            current_preview_sha = ((after.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
-            if current_preview_sha and current_preview_sha != before_preview_sha:
-                break
-            await asyncio.sleep(poll_ms / 1000)
-            elapsed += poll_ms
-            polls += 1
-            after = await client.get_button_info_current(page, row, column)
-            if not after.get("ok"):
-                break
 
     before_body = before.get("body", {})
     after_body = after.get("body", {})
@@ -426,6 +511,65 @@ async def export_page_layout(page: int, rows: int = 4, columns: int = 8, include
 
 @mcp.tool()
 @_handle_errors
+async def snapshot_page_inventory(page: int, rows: int = 4, columns: int = 8, include_empty: bool = False) -> str:
+    """Export a page region with operator-focused button summaries, hashes, style, and feedback state."""
+    raw = json.loads(await get_page_grid(page, rows=rows, columns=columns, include_empty=include_empty))
+    buttons = [_summarize_button(button) for button in raw.get("buttons", [])]
+    return _json({
+        "page": page,
+        "rows": rows,
+        "columns": columns,
+        "include_empty": include_empty,
+        "button_count": len(buttons),
+        "buttons": buttons,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def find_buttons(
+    query: str = "",
+    page: int = 1,
+    rows: int = 4,
+    columns: int = 8,
+    include_empty: bool = False,
+    control_type: str = "",
+) -> str:
+    """Find buttons by text, control id, or control type within a page region."""
+    raw = json.loads(await get_page_grid(page, rows=rows, columns=columns, include_empty=include_empty))
+    needle = query.strip().lower()
+    type_filter = control_type.strip().lower()
+    matches = []
+    for button in raw.get("buttons", []):
+        summary = _summarize_button(button)
+        haystack = " ".join(
+            str(value)
+            for value in [
+                summary.get("control_id"),
+                (summary.get("style_meta") or {}).get("text"),
+                summary.get("control_type"),
+            ]
+            if value not in (None, "")
+        ).lower()
+        button_type = (summary.get("control_type") or "").lower()
+        if needle and needle not in haystack:
+            continue
+        if type_filter and button_type != type_filter:
+            continue
+        matches.append(summary)
+    return _json({
+        "page": page,
+        "rows": rows,
+        "columns": columns,
+        "query": query,
+        "control_type": control_type,
+        "count": len(matches),
+        "matches": matches,
+    })
+
+
+@mcp.tool()
+@_handle_errors
 async def snapshot_custom_variables(names_json: str) -> str:
     """Read a named set of custom variables into one snapshot payload."""
     names = json.loads(names_json)
@@ -461,6 +605,71 @@ async def press_button(page: int, row: int, column: int) -> str:
     _validate_button_coords(page, row, column)
     result = await _client().button_action(page, row, column, "press")
     return _json(result)
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def press_button_verified(page: int, row: int, column: int, wait_ms: int = 500, poll_ms: int = 100) -> str:
+    """Press a button and verify whether its visible or runtime state changed."""
+    _validate_button_coords(page, row, column)
+    _validate_poll_ms(wait_ms, "wait_ms")
+    _validate_poll_ms(poll_ms, "poll_ms")
+    if wait_ms and poll_ms == 0:
+        raise ValueError("poll_ms must be > 0 when wait_ms is non-zero.")
+
+    client = _client()
+    before = await client.get_button_info_current(page, row, column)
+    if not before.get("ok"):
+        return _json(before)
+
+    write_result = await client.button_action(page, row, column, "press")
+    before_preview_sha = ((before.get("body") or {}).get("preview_meta") or {}).get("image_sha256")
+    after, polls = await _poll_button_info(
+        client,
+        page,
+        row,
+        column,
+        previous_preview_sha=before_preview_sha,
+        wait_ms=wait_ms,
+        poll_ms=poll_ms,
+    )
+    if not after.get("ok"):
+        return _json({
+            "ok": False,
+            "page": page,
+            "row": row,
+            "column": column,
+            "write_result": write_result,
+            "after": after,
+        })
+
+    before_body = before.get("body", {})
+    after_body = after.get("body", {})
+    before_preview = before_body.get("preview_meta") or {}
+    after_preview = after_body.get("preview_meta") or {}
+    before_runtime = _button_runtime_summary(before_body)
+    after_runtime = _button_runtime_summary(after_body)
+    return _json({
+        "ok": bool(write_result.get("ok")) and after.get("ok", False),
+        "page": page,
+        "row": row,
+        "column": column,
+        "write_result": write_result,
+        "wait_ms": wait_ms,
+        "poll_ms": poll_ms,
+        "polls": polls,
+        "render_changed": before_preview.get("image_sha256") != after_preview.get("image_sha256"),
+        "runtime_changed": before_runtime != after_runtime,
+        "before": {
+            "runtime_summary": before_runtime,
+            "preview_meta": before_preview,
+        },
+        "after": {
+            "runtime_summary": after_runtime,
+            "preview_meta": after_preview,
+        },
+    })
 
 
 @mcp.tool()

@@ -81,6 +81,28 @@ async def test_get_button_info(mock_client_factory):
 
 @pytest.mark.asyncio
 @patch("companion_mcp.server._client")
+async def test_get_button_runtime_summary(mock_client_factory):
+    from companion_mcp.server import get_button_runtime_summary
+    fake = MagicMock()
+    fake.get_button_info_current = AsyncMock(return_value={
+        "ok": True,
+        "body": {
+            "control": {"config": {"type": "button"}, "runtime": {"current_step_id": "2"}},
+            "style_meta": {"text": "GO"},
+            "feedback_meta": {"style_may_be_feedback_controlled": True},
+            "preview_meta": {"image_sha256": "abc123", "isUsed": True},
+        },
+    })
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await get_button_runtime_summary(1, 0, 0))
+    assert result["runtime_summary"]["control_type"] == "button"
+    assert result["runtime_summary"]["is_stepped"] is True
+    assert result["runtime_summary"]["has_feedback_overrides"] is True
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
 async def test_get_button_info_returns_compat_error_on_404(mock_client_factory):
     from companion_mcp.server import get_button_info
     fake = MagicMock()
@@ -144,6 +166,41 @@ async def test_set_button_style_verified(mock_client_factory):
     assert result["style_may_be_feedback_controlled"] is True
     assert result["feedback_summary"]["active_style_feedbacks"] == 1
     fake.set_style.assert_awaited_once_with(1, 0, 1, text="NEW", color="ffffff", bgcolor="0057ff")
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_press_button_verified(mock_client_factory):
+    from companion_mcp.server import press_button_verified
+    fake = MagicMock()
+    fake.get_button_info_current = AsyncMock(side_effect=[
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}, "runtime": {"current_step_id": "0"}},
+                "style_meta": {"text": "GO"},
+                "feedback_meta": {"style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "before", "isUsed": True},
+            },
+        },
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}, "runtime": {"current_step_id": "1"}},
+                "style_meta": {"text": "GO"},
+                "feedback_meta": {"style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "after", "isUsed": True},
+            },
+        },
+    ])
+    fake.button_action = AsyncMock(return_value={"ok": True, "status_code": 200})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await press_button_verified(1, 0, 1))
+    assert result["ok"] is True
+    assert result["render_changed"] is True
+    assert result["runtime_changed"] is True
+    fake.button_action.assert_awaited_once_with(1, 0, 1, "press")
 
 
 @pytest.mark.asyncio
@@ -217,6 +274,63 @@ async def test_get_page_grid(mock_client_factory):
     result = json.loads(await get_page_grid(1, rows=1, columns=2))
     assert result["count"] == 1
     assert result["buttons"][0]["control"]["config"]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.get_page_grid")
+async def test_snapshot_page_inventory(mock_get_page_grid):
+    from companion_mcp.server import snapshot_page_inventory
+    mock_get_page_grid.return_value = json.dumps({
+        "buttons": [{
+            "page": 1,
+            "row": 0,
+            "column": 1,
+            "control_id": "bank:abc",
+            "exists": True,
+            "control": {"config": {"type": "button"}, "runtime": {"current_step_id": "1"}},
+            "style_meta": {"text": "GO"},
+            "feedback_meta": {"style_may_be_feedback_controlled": False},
+            "preview_meta": {"image_sha256": "abc123", "isUsed": True},
+        }],
+    })
+    result = json.loads(await snapshot_page_inventory(1, rows=1, columns=2))
+    assert result["button_count"] == 1
+    assert result["buttons"][0]["runtime_summary"]["control_type"] == "button"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.get_page_grid")
+async def test_find_buttons(mock_get_page_grid):
+    from companion_mcp.server import find_buttons
+    mock_get_page_grid.return_value = json.dumps({
+        "buttons": [
+            {
+                "page": 1,
+                "row": 0,
+                "column": 1,
+                "control_id": "bank:abc",
+                "exists": True,
+                "control": {"config": {"type": "button"}},
+                "style_meta": {"text": "GO"},
+                "feedback_meta": {"style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "abc123", "isUsed": True},
+            },
+            {
+                "page": 1,
+                "row": 0,
+                "column": 2,
+                "control_id": "bank:def",
+                "exists": True,
+                "control": {"config": {"type": "pageup"}},
+                "style_meta": {"text": "NEXT"},
+                "feedback_meta": {"style_may_be_feedback_controlled": False},
+                "preview_meta": {"image_sha256": "def456", "isUsed": True},
+            },
+        ],
+    })
+    result = json.loads(await find_buttons(query="go", page=1, rows=1, columns=8))
+    assert result["count"] == 1
+    assert result["matches"][0]["column"] == 1
 
 
 @pytest.mark.asyncio
