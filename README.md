@@ -212,6 +212,31 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
 }
 ```
 
+## Codex
+
+Create a `codex.json` MCP config file:
+
+```json
+{
+  "mcpServers": {
+    "companion": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/companion-mcp", "python", "-m", "companion_mcp"],
+      "env": {
+        "COMPANION_HOST": "127.0.0.1",
+        "COMPANION_PORT": "8000"
+      }
+    }
+  }
+}
+```
+
+Then run Codex with:
+
+```bash
+codex --mcp-config codex.json
+```
+
 ## Production safety
 
 This server is designed for live show environments where accidental writes can disrupt a running production.
