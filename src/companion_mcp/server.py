@@ -2,7 +2,7 @@
 Companion MCP Server
 
 MCP server for Bitfocus Companion — button control, styling,
-variable management, and batch show programming via HTTP API.
+variable management, and batch show programming via current Companion APIs.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from .config import load_config
 mcp = FastMCP(
     "Companion MCP",
     instructions=(
-        "Control Bitfocus Companion button surfaces via HTTP API. "
+        "Control Bitfocus Companion button surfaces via current Companion APIs. "
+        "Writes use HTTP endpoints and richer reads use websocket tRPC where available. "
         "Use page/row/column coordinates for button operations. "
         "Row and column are 0-indexed. Page is 1-indexed."
     ),

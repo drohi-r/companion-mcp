@@ -8,10 +8,10 @@
   <a href="https://github.com/drohi-r/companion-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-orange?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=for-the-badge" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/MCP_Tools-28-14B8A6?style=for-the-badge" alt="28 MCP Tools">
-  <img src="https://img.shields.io/badge/Tests-39-14B8A6?style=for-the-badge" alt="39 Tests">
+  <img src="https://img.shields.io/badge/Tests-47-14B8A6?style=for-the-badge" alt="47 Tests">
 </p>
 
-An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 28 tools covering button control, styling, page discovery, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices via the HTTP API.
+An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 28 tools covering button control, styling, page discovery, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
 
 Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
@@ -29,14 +29,16 @@ uv sync
 uv run python -m companion_mcp
 ```
 
-Make sure Companion is running with the HTTP API enabled (default port 8000).
+Make sure Companion is running on the target host and port. Current Companion builds use:
+- HTTP endpoints for button actions and style writes
+- websocket tRPC at `/trpc` for richer reads, discovery, preview, and variable inspection
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COMPANION_HOST` | `127.0.0.1` | Companion instance IP |
-| `COMPANION_PORT` | `8000` | HTTP API port |
+| `COMPANION_PORT` | `8000` | Companion HTTP and websocket port |
 | `COMPANION_TIMEOUT_S` | `10.0` | HTTP request timeout in seconds |
 | `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for target hosts. Set `*` to allow any. |
 | `COMPANION_WRITE_ENABLED` | `1` | Set to `0` for read-only mode |
@@ -53,7 +55,7 @@ Safe, read-only tools for understanding the current state of Companion.
 | `get_server_config` | Return current MCP server configuration and safety settings |
 | `health_check` | Probe Companion API reachability and return status |
 | `list_surfaces` | List connected control surfaces (Stream Deck, etc.) |
-| `get_button_info` | Read the raw API payload for a specific button |
+| `get_button_info` | Read the current control and preview state for a specific button |
 | `get_page_grid` | Read a rectangular grid of buttons from a page |
 | `export_page_layout` | Export a page region as a reusable layout payload |
 | `get_custom_variable` | Read a Companion custom variable |
@@ -156,7 +158,7 @@ This server is designed for live show environments where accidental writes can d
 
 ```bash
 uv sync
-uv run python -m pytest -v   # 39 tests
+uv run python -m pytest -v   # 47 tests
 ```
 
 ## License
