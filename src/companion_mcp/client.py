@@ -365,6 +365,25 @@ class CompanionClient:
             "image_bytes": len(payload),
         }
 
+    def _style_meta(self, control: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(control, dict):
+            return None
+        config = control.get("config")
+        if not isinstance(config, dict):
+            return None
+        style = config.get("style")
+        if not isinstance(style, dict):
+            return None
+        return {
+            "text": style.get("text"),
+            "size": style.get("size"),
+            "color": style.get("color"),
+            "bgcolor": style.get("bgcolor"),
+            "show_topbar": style.get("show_topbar"),
+            "alignment": style.get("alignment"),
+            "pngalignment": style.get("pngalignment"),
+        }
+
     async def get_button_info_current(self, page: int, row: int, column: int) -> dict[str, Any]:
         pages_result = await self.get_pages_snapshot()
         if not pages_result.get("ok"):
@@ -395,6 +414,7 @@ class CompanionClient:
         control_result = await self.get_control_snapshot(control_id)
         if not control_result.get("ok"):
             return control_result
+        control_body = control_result.get("body")
 
         return {
             "ok": True,
@@ -406,7 +426,8 @@ class CompanionClient:
                 "column": column,
                 "control_id": control_id,
                 "exists": True,
-                "control": control_result.get("body"),
+                "control": control_body,
+                "style_meta": self._style_meta(control_body),
                 "preview": preview_result.get("body"),
                 "preview_meta": self._preview_meta(preview_result.get("body")),
             },
@@ -433,6 +454,7 @@ class CompanionClient:
 
                 preview_result = await self.get_preview_location(page, row, column)
                 control_result = await self.get_control_snapshot(control_id) if control_id else None
+                control_body = control_result.get("body") if control_result and control_result.get("ok") else None
                 buttons.append(
                     {
                         "page": page,
@@ -442,7 +464,8 @@ class CompanionClient:
                         "exists": control_id is not None,
                         "preview": preview_result.get("body") if preview_result.get("ok") else None,
                         "preview_meta": self._preview_meta(preview_result.get("body")) if preview_result.get("ok") else None,
-                        "control": control_result.get("body") if control_result and control_result.get("ok") else None,
+                        "control": control_body,
+                        "style_meta": self._style_meta(control_body),
                     }
                 )
 

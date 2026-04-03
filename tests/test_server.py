@@ -64,6 +64,7 @@ async def test_get_button_info(mock_client_factory):
         "ok": True,
         "body": {
             "control": {"config": {"text": "GO"}},
+            "style_meta": {"text": "GO", "color": 1, "bgcolor": 2},
             "preview_meta": {"image_sha256": "abc123", "image_bytes": 42},
         },
     })
@@ -72,6 +73,7 @@ async def test_get_button_info(mock_client_factory):
     result = json.loads(await get_button_info(1, 0, 0))
     assert result["ok"] is True
     assert result["body"]["control"]["config"]["text"] == "GO"
+    assert result["body"]["style_meta"]["text"] == "GO"
     assert result["body"]["preview_meta"]["image_sha256"] == "abc123"
 
 
@@ -102,6 +104,40 @@ async def test_verify_button_render_change(mock_client_factory):
     result = json.loads(await verify_button_render_change(1, 0, 0, "oldhash"))
     assert result["changed"] is True
     assert result["current_sha256"] == "newhash"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server._client")
+async def test_set_button_style_verified(mock_client_factory):
+    from companion_mcp.server import set_button_style_verified
+    fake = MagicMock()
+    fake.get_button_info_current = AsyncMock(side_effect=[
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}},
+                "style_meta": {"text": "OLD", "color": 1, "bgcolor": 2},
+                "preview_meta": {"image_sha256": "before"},
+            },
+        },
+        {
+            "ok": True,
+            "body": {
+                "control": {"config": {"type": "button"}},
+                "style_meta": {"text": "NEW", "color": 3, "bgcolor": 4},
+                "preview_meta": {"image_sha256": "after"},
+            },
+        },
+    ])
+    fake.set_style = AsyncMock(return_value={"ok": True, "status_code": 200})
+    mock_client_factory.return_value = fake
+
+    result = json.loads(await set_button_style_verified(1, 0, 1, text="NEW", color="ffffff", bgcolor="0057ff"))
+    assert result["ok"] is True
+    assert result["render_changed"] is True
+    assert result["style_changed"] is True
+    assert result["control_type"] == "button"
+    fake.set_style.assert_awaited_once_with(1, 0, 1, text="NEW", color="ffffff", bgcolor="0057ff")
 
 
 @pytest.mark.asyncio

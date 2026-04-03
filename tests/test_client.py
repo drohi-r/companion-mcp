@@ -169,11 +169,12 @@ async def test_get_button_info_current_combines_control_and_preview():
         },
     })
     client.get_preview_location = AsyncMock(return_value={"ok": True, "body": {"image": "data:image/png;base64,YWJj"}})
-    client.get_control_snapshot = AsyncMock(return_value={"ok": True, "body": {"type": "init", "config": {"text": "GO"}}})
+    client.get_control_snapshot = AsyncMock(return_value={"ok": True, "body": {"type": "init", "config": {"text": "GO", "style": {"text": "GO", "color": 1, "bgcolor": 2}}}})
 
     result = await client.get_button_info_current(1, 0, 0)
     assert result["body"]["control_id"] == "bank:abc"
     assert result["body"]["control"]["config"]["text"] == "GO"
+    assert result["body"]["style_meta"]["text"] == "GO"
     assert result["body"]["preview_meta"]["image_sha256"]
     assert result["body"]["preview_meta"]["image_bytes"] > 0
 
@@ -193,9 +194,10 @@ async def test_get_page_grid_current_skips_empty_buttons():
         },
     })
     client.get_preview_location = AsyncMock(return_value={"ok": True, "body": {"image": "data:image/png;base64,YWJj"}})
-    client.get_control_snapshot = AsyncMock(return_value={"ok": True, "body": {"type": "init"}})
+    client.get_control_snapshot = AsyncMock(return_value={"ok": True, "body": {"type": "init", "config": {"style": {"text": "GO"}}}})
 
     result = await client.get_page_grid_current(1, 1, 2, include_empty=False)
     assert result["body"]["count"] == 1
     assert result["body"]["buttons"][0]["control_id"] == "bank:abc"
+    assert result["body"]["buttons"][0]["style_meta"]["text"] == "GO"
     assert result["body"]["buttons"][0]["preview_meta"]["image_sha256"]

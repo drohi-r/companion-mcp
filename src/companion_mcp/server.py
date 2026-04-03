@@ -279,6 +279,74 @@ async def verify_button_render_change(page: int, row: int, column: int, previous
 
 @mcp.tool()
 @_handle_errors
+@_require_writes_enabled
+async def set_button_style_verified(
+    page: int,
+    row: int,
+    column: int,
+    *,
+    text: str = "",
+    color: str = "",
+    bgcolor: str = "",
+    size: str = "",
+) -> str:
+    """Apply button style changes and verify whether the rendered button output actually changed."""
+    _validate_button_coords(page, row, column)
+    _validate_hex_color(color, "color")
+    _validate_hex_color(bgcolor, "bgcolor")
+    style = _normalize_style_payload({"text": text, "color": color, "bgcolor": bgcolor, "size": size})
+    if not style:
+        raise ValueError("At least one style field must be provided.")
+
+    client = _client()
+    before = await client.get_button_info_current(page, row, column)
+    if not before.get("ok"):
+        return _json(before)
+
+    write_result = await client.set_style(page, row, column, **style)
+    after = await client.get_button_info_current(page, row, column)
+    if not after.get("ok"):
+        return _json({
+            "ok": False,
+            "page": page,
+            "row": row,
+            "column": column,
+            "write_result": write_result,
+            "after": after,
+        })
+
+    before_body = before.get("body", {})
+    after_body = after.get("body", {})
+    before_preview = before_body.get("preview_meta") or {}
+    after_preview = after_body.get("preview_meta") or {}
+    before_control = (before_body.get("control") or {}).get("config") or {}
+    after_control = (after_body.get("control") or {}).get("config") or {}
+    before_style = before_body.get("style_meta")
+    after_style = after_body.get("style_meta")
+
+    return _json({
+        "ok": bool(write_result.get("ok")) and after.get("ok", False),
+        "page": page,
+        "row": row,
+        "column": column,
+        "applied_style": style,
+        "control_type": after_control.get("type"),
+        "write_result": write_result,
+        "render_changed": before_preview.get("image_sha256") != after_preview.get("image_sha256"),
+        "style_changed": before_style != after_style,
+        "before": {
+            "style_meta": before_style,
+            "preview_meta": before_preview,
+        },
+        "after": {
+            "style_meta": after_style,
+            "preview_meta": after_preview,
+        },
+    })
+
+
+@mcp.tool()
+@_handle_errors
 async def get_page_grid(page: int, rows: int = 4, columns: int = 8, include_empty: bool = False) -> str:
     """Read a rectangular grid of button payloads for a page."""
     _validate_page(page)
