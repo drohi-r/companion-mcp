@@ -19,3 +19,12 @@ def test_query_int_validation():
 def test_json_bytes_round_trip():
     payload = {"ok": True, "count": 2}
     assert json.loads(ui._json_bytes(payload).decode("utf-8")) == payload
+
+
+def test_coords_json_for_selected_button():
+    payload = json.loads(ui._coords_json({"page": 1, "row": 2, "column": 3}))
+    assert payload == [{"page": 1, "row": 2, "column": 3}]
+
+
+def test_coords_json_missing_button_returns_empty_string():
+    assert ui._coords_json({"page": 1}) == ""

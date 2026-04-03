@@ -5,6 +5,7 @@ const state = {
   includeEmpty: false,
   selected: null,
   lastInventory: null,
+  activity: [],
 };
 
 const els = {
@@ -34,7 +35,12 @@ const els = {
   snapshotList: document.querySelector("#snapshot-list"),
   saveSnapshot: document.querySelector("#save-snapshot"),
   loadSnapshot: document.querySelector("#load-snapshot"),
+  diffSnapshot: document.querySelector("#diff-snapshot"),
   deleteSnapshot: document.querySelector("#delete-snapshot"),
+  previewRestoreAll: document.querySelector("#preview-restore-all"),
+  restoreAll: document.querySelector("#restore-all"),
+  previewRestoreSelected: document.querySelector("#preview-restore-selected"),
+  restoreSelected: document.querySelector("#restore-selected"),
   presetName: document.querySelector("#preset-name"),
   presetList: document.querySelector("#preset-list"),
   savePreset: document.querySelector("#save-preset"),
@@ -48,10 +54,18 @@ const els = {
   runSearch: document.querySelector("#run-search"),
   searchResults: document.querySelector("#search-results"),
   lastResponse: document.querySelector("#last-response"),
+  activityLog: document.querySelector("#activity-log"),
 };
 
 function setLastResponse(payload) {
   els.lastResponse.textContent = JSON.stringify(payload, null, 2);
+  state.activity.unshift({
+    at: new Date().toISOString(),
+    ok: payload?.ok,
+    summary: payload?.error || payload?.action || payload?.path || payload?.probe_path || "response",
+  });
+  state.activity = state.activity.slice(0, 25);
+  els.activityLog.textContent = JSON.stringify(state.activity, null, 2);
 }
 
 async function api(path, options = {}) {
@@ -148,6 +162,28 @@ async function refreshGrid(selectFirst = true) {
   if (selectFirst && buttons.length && !state.selected) {
     await selectButton(buttons[0]);
   }
+}
+
+function renderSearchResults(payload) {
+  const matches = payload.matches || [];
+  if (!matches.length) {
+    els.searchResults.textContent = JSON.stringify(payload, null, 2);
+    return;
+  }
+  els.searchResults.innerHTML = "";
+  matches.forEach((match) => {
+    const row = document.createElement("div");
+    row.className = "search-result";
+    row.innerHTML = `
+      <strong>${match.style_meta?.text || match.control_id || "Unnamed"}</strong>
+      <small>Page ${match.page} · Row ${match.row} · Column ${match.column} · ${match.control_type || "unknown"}</small>
+    `;
+    row.addEventListener("click", async () => {
+      const payload = await api(`/api/button?page=${match.page}&row=${match.row}&column=${match.column}`);
+      await selectButton(payload.body || payload);
+    });
+    els.searchResults.appendChild(row);
+  });
 }
 
 async function refreshSnapshots() {
@@ -276,6 +312,48 @@ async function loadSnapshot() {
   els.searchResults.textContent = JSON.stringify(payload, null, 2);
 }
 
+async function diffSnapshot() {
+  const payload = await api("/api/snapshots/diff-current", {
+    method: "POST",
+    body: JSON.stringify({
+      name: els.snapshotList.value,
+      page: state.page,
+      rows: state.rows,
+      columns: state.columns,
+      include_empty: state.includeEmpty,
+    }),
+  });
+  els.searchResults.textContent = JSON.stringify(payload.diff || payload, null, 2);
+}
+
+async function previewRestoreSnapshot(selectedOnly) {
+  const selected = selectedOnly ? selectedCoords() : {};
+  const payload = await api("/api/snapshots/preview-restore", {
+    method: "POST",
+    body: JSON.stringify({
+      name: els.snapshotList.value,
+      selected_only: selectedOnly,
+      ...selected,
+    }),
+  });
+  els.searchResults.textContent = JSON.stringify(payload, null, 2);
+}
+
+async function restoreSnapshot(selectedOnly) {
+  const selected = selectedOnly ? selectedCoords() : {};
+  await api("/api/snapshots/restore", {
+    method: "POST",
+    body: JSON.stringify({
+      name: els.snapshotList.value,
+      selected_only: selectedOnly,
+      ...selected,
+      wait_ms: 1000,
+      poll_ms: 200,
+    }),
+  });
+  await refreshGrid(false);
+}
+
 async function runSearch() {
   const payload = await api(`/api/search?${new URLSearchParams({
     query: els.searchQuery.value,
@@ -284,7 +362,7 @@ async function runSearch() {
     columns: String(state.columns),
     include_empty: state.includeEmpty ? "1" : "0",
   }).toString()}`);
-  els.searchResults.textContent = JSON.stringify(payload, null, 2);
+  renderSearchResults(payload);
 }
 
 async function applyTransaction() {
@@ -336,7 +414,12 @@ function bind() {
   els.styleForm.addEventListener("submit", applyVerifiedStyle);
   els.saveSnapshot.addEventListener("click", saveSnapshot);
   els.loadSnapshot.addEventListener("click", loadSnapshot);
+  els.diffSnapshot.addEventListener("click", diffSnapshot);
   els.deleteSnapshot.addEventListener("click", deleteSnapshot);
+  els.previewRestoreAll.addEventListener("click", () => previewRestoreSnapshot(false));
+  els.restoreAll.addEventListener("click", () => restoreSnapshot(false));
+  els.previewRestoreSelected.addEventListener("click", () => previewRestoreSnapshot(true));
+  els.restoreSelected.addEventListener("click", () => restoreSnapshot(true));
   els.savePreset.addEventListener("click", savePreset);
   els.previewPreset.addEventListener("click", previewPreset);
   els.applyPreset.addEventListener("click", applyPreset);

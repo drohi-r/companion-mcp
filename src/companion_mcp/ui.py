@@ -57,6 +57,18 @@ def _load_static_text(name: str) -> bytes:
     return base.joinpath(name).read_bytes()
 
 
+def _coords_json(body: dict[str, Any]) -> str:
+    page = body.get("page")
+    row = body.get("row")
+    column = body.get("column")
+    if row is None or column is None:
+        return ""
+    entry = {"row": int(row), "column": int(column)}
+    if page is not None:
+        entry["page"] = int(page)
+    return json.dumps([entry])
+
+
 async def _call_json(func, *args, **kwargs) -> dict[str, Any]:
     raw = await func(*args, **kwargs)
     return json.loads(raw)
@@ -70,6 +82,15 @@ async def _route_api(method: str, path: str, query: dict[str, list[str]], body: 
     if method == "GET" and path == "/api/page":
         payload = await _call_json(
             server.get_page_grid,
+            _query_int(query, "page", 1),
+            _query_int(query, "rows", 4),
+            _query_int(query, "columns", 8),
+            _parse_bool(_query_value(query, "include_empty"), False),
+        )
+        return HTTPStatus.OK, _json_bytes(payload)
+    if method == "GET" and path == "/api/inventory/current":
+        payload = await _call_json(
+            server.snapshot_page_inventory,
             _query_int(query, "page", 1),
             _query_int(query, "rows", 4),
             _query_int(query, "columns", 8),
@@ -119,6 +140,43 @@ async def _route_api(method: str, path: str, query: dict[str, list[str]], body: 
             int(body.get("rows", 4)),
             int(body.get("columns", 8)),
             bool(body.get("include_empty", False)),
+        )
+        return HTTPStatus.OK, _json_bytes(payload)
+    if method == "POST" and path == "/api/snapshots/diff-current":
+        current_inventory = await _call_json(
+            server.snapshot_page_inventory,
+            int(body.get("page", 1)),
+            int(body.get("rows", 4)),
+            int(body.get("columns", 8)),
+            bool(body.get("include_empty", False)),
+        )
+        saved = await _call_json(server.load_page_inventory_snapshot, str(body.get("name", "")))
+        payload = await _call_json(
+            server.diff_page_inventory,
+            json.dumps(saved.get("inventory", {})),
+            json.dumps(current_inventory),
+        )
+        return HTTPStatus.OK, _json_bytes({
+            "ok": True,
+            "snapshot_name": body.get("name", ""),
+            "saved_inventory": saved.get("inventory"),
+            "current_inventory": current_inventory,
+            "diff": payload,
+        })
+    if method == "POST" and path == "/api/snapshots/preview-restore":
+        payload = await _call_json(
+            server.preview_restore_page_style_from_snapshot,
+            str(body.get("name", "")),
+            _coords_json(body) if body.get("selected_only") else "",
+        )
+        return HTTPStatus.OK, _json_bytes(payload)
+    if method == "POST" and path == "/api/snapshots/restore":
+        payload = await _call_json(
+            server.restore_page_style_from_snapshot,
+            str(body.get("name", "")),
+            int(body.get("wait_ms", 500)),
+            int(body.get("poll_ms", 100)),
+            _coords_json(body) if body.get("selected_only") else "",
         )
         return HTTPStatus.OK, _json_bytes(payload)
     if method == "GET" and path == "/api/presets":

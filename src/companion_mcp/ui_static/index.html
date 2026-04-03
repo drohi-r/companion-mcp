@@ -114,7 +114,14 @@
             <div class="inline-row">
               <select id="snapshot-list"></select>
               <button id="load-snapshot" class="btn">Load</button>
+              <button id="diff-snapshot" class="btn">Diff current</button>
               <button id="delete-snapshot" class="btn btn-danger">Delete</button>
+            </div>
+            <div class="inline-row">
+              <button id="preview-restore-all" class="btn">Preview restore all</button>
+              <button id="restore-all" class="btn">Restore all</button>
+              <button id="preview-restore-selected" class="btn">Preview selected</button>
+              <button id="restore-selected" class="btn btn-primary">Restore selected</button>
             </div>
           </div>
 
@@ -157,6 +164,13 @@
           <h2>Last Response</h2>
         </div>
         <pre id="last-response" class="summary-box">No actions yet.</pre>
+      </section>
+
+      <section class="panel response-panel">
+        <div class="panel-header">
+          <h2>Activity Log</h2>
+        </div>
+        <pre id="activity-log" class="summary-box">No activity yet.</pre>
       </section>
     </div>
     <script src="/app.js" type="module"></script>

@@ -263,6 +263,20 @@ select {
   word-break: break-word;
 }
 
+.search-result {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.03);
+}
+
+.search-result:hover {
+  border-color: rgba(61, 217, 184, 0.45);
+  background: rgba(61, 217, 184, 0.08);
+}
+
 .ops-block + .ops-block {
   margin-top: 18px;
 }
