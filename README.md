@@ -7,11 +7,11 @@
 <p align="center">
   <a href="https://github.com/drohi-r/companion-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-orange?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=for-the-badge" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/MCP_Tools-38-14B8A6?style=for-the-badge" alt="38 MCP Tools">
-  <img src="https://img.shields.io/badge/Tests-59-14B8A6?style=for-the-badge" alt="59 Tests">
+  <img src="https://img.shields.io/badge/MCP_Tools-45-14B8A6?style=for-the-badge" alt="45 MCP Tools">
+  <img src="https://img.shields.io/badge/Tests-65-14B8A6?style=for-the-badge" alt="65 Tests">
 </p>
 
-An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 38 tools covering verified button control, styling, page discovery, runtime summaries, inventory diffing, rollback/restore workflows, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
+An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 45 tools covering verified button control, styling, page discovery, runtime summaries, inventory diffing, checkpointed rollback/restore workflows, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
 
 Built for live production. Pairs with [MA2 Agent](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
@@ -59,8 +59,11 @@ Safe, read-only tools for understanding the current state of Companion.
 | `get_button_runtime_summary` | Return a compact operator-oriented runtime summary for a button |
 | `get_page_grid` | Read a rectangular grid of buttons from a page |
 | `snapshot_page_inventory` | Export a page region with concise button summaries, style, feedback, and preview hashes |
+| `save_page_inventory_snapshot` | Save a named page inventory checkpoint to disk |
+| `load_page_inventory_snapshot` | Load a saved page inventory checkpoint from disk |
 | `diff_page_inventory` | Compare two page inventory snapshots and summarize changed buttons |
 | `preview_restore_page_style_from_inventory` | Turn a saved inventory snapshot into a restore plan without writing to Companion |
+| `preview_restore_page_style_from_snapshot` | Preview a restore plan from a named saved snapshot |
 | `find_buttons` | Search a page region by visible text, control id, control type, connection id, or definition id |
 | `export_page_layout` | Export a page region as a reusable layout payload |
 | `get_custom_variable` | Read a Companion custom variable |
@@ -109,6 +112,10 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
 | `set_page_style` | Batch-set style on multiple buttons on a page |
 | `set_page_style_verified` | Batch-set styles on a page and return per-button verification plus an inventory diff |
 | `restore_page_style_from_inventory` | Restore button styles from a previously captured page inventory |
+| `restore_selected_page_style_from_inventory` | Restore only selected coordinates from an inventory snapshot |
+| `restore_page_style_from_snapshot` | Restore styles from a named saved snapshot |
+| `apply_page_style_transaction` | Save a rollback checkpoint, apply verified styles, and return rollback metadata |
+| `rollback_page_style_transaction` | Roll back a named transaction snapshot |
 | `label_button_grid` | Label a grid of buttons from a flat list of names |
 | `apply_button_template` | Apply a reusable button template at a page origin |
 
@@ -163,7 +170,8 @@ This server is designed for live show environments where accidental writes can d
 - **Preview before apply** — every batch operation has a corresponding preview tool that validates inputs and shows exactly what will change, without touching Companion.
 - **Verified writes** — prefer `press_button_verified` and `set_button_style_verified` when you care about actual visible or runtime state changes, not just HTTP acceptance.
 - **Snapshot and diff workflow** — use `snapshot_page_inventory` before and after batch changes, or let `set_page_style_verified` produce an inventory diff automatically.
-- **Rollback path** — capture a page with `snapshot_page_inventory`, inspect the restore plan with `preview_restore_page_style_from_inventory`, then use `restore_page_style_from_inventory` to roll styles back cleanly.
+- **Rollback path** — capture a page with `snapshot_page_inventory` or `save_page_inventory_snapshot`, inspect the restore plan with `preview_restore_page_style_from_inventory` or `preview_restore_page_style_from_snapshot`, then use the matching restore tool to roll styles back cleanly.
+- **Transaction flow** — `apply_page_style_transaction` creates a named rollback checkpoint before it writes. `rollback_page_style_transaction` restores from that named snapshot.
 - **Input validation** — page, row, column, color hex, delay bounds, and template structure are all validated before any API call is made. Invalid inputs return structured JSON errors, never raw exceptions.
 - **Error isolation** — all tools are wrapped in `_handle_errors`. Network failures, JSON parse errors, and validation failures return `{"ok": false, "error": "...", "blocked": true}` instead of crashing the MCP session.
 
@@ -180,7 +188,7 @@ This server is designed for live show environments where accidental writes can d
 
 ```bash
 uv sync
-uv run python -m pytest -v   # 59 tests
+uv run python -m pytest -v   # 65 tests
 ```
 
 ## License

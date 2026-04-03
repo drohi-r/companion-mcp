@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 from functools import wraps
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -118,6 +119,25 @@ def _validate_hex_color(value: str, field: str) -> None:
     normalized = value.lstrip("#")
     if len(normalized) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in normalized):
         raise ValueError(f"{field} must be a 6-digit hex color")
+
+
+def _validate_snapshot_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise ValueError("snapshot name must be non-empty.")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    if any(ch not in allowed for ch in normalized):
+        raise ValueError("snapshot name may contain only letters, numbers, '.', '-', and '_'.")
+    return normalized
+
+
+def _snapshot_dir() -> Path:
+    return Path(os.environ.get("COMPANION_SNAPSHOT_DIR", ".companion-snapshots"))
+
+
+def _snapshot_path(name: str) -> Path:
+    safe_name = _validate_snapshot_name(name)
+    return _snapshot_dir() / f"{safe_name}.json"
 
 
 def _normalize_style_payload(raw_style: dict[str, Any]) -> dict[str, Any]:
@@ -314,6 +334,38 @@ def _restore_entries_from_inventory(inventory: dict[str, Any]) -> list[dict[str,
         if len(entry) > 2:
             entries.append(entry)
     return entries
+
+
+def _filter_restore_entries(entries: list[dict[str, Any]], coords_json: str = "") -> list[dict[str, Any]]:
+    if not coords_json:
+        return entries
+    coords = json.loads(coords_json)
+    if not isinstance(coords, list):
+        raise ValueError("coords_json must be a JSON array of {row, column} objects.")
+    wanted: set[tuple[int, int]] = set()
+    for item in coords:
+        if not isinstance(item, dict):
+            raise ValueError("Each coords_json entry must be an object.")
+        row = item.get("row")
+        column = item.get("column")
+        if not isinstance(row, int) or not isinstance(column, int):
+            raise ValueError("Each coords_json entry must include integer row and column values.")
+        wanted.add((row, column))
+    return [entry for entry in entries if (entry["row"], entry["column"]) in wanted]
+
+
+def _write_snapshot_file(name: str, payload: dict[str, Any]) -> Path:
+    path = _snapshot_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str))
+    return path
+
+
+def _read_snapshot_file(name: str) -> dict[str, Any]:
+    path = _snapshot_path(name)
+    if not path.exists():
+        raise ValueError(f"Snapshot {name!r} does not exist.")
+    return json.loads(path.read_text())
 
 
 async def _poll_button_info(
@@ -649,6 +701,40 @@ async def snapshot_page_inventory(page: int, rows: int = 4, columns: int = 8, in
 
 @mcp.tool()
 @_handle_errors
+async def save_page_inventory_snapshot(
+    name: str,
+    page: int,
+    rows: int = 4,
+    columns: int = 8,
+    include_empty: bool = False,
+) -> str:
+    """Capture a page inventory snapshot and save it to a local checkpoint file."""
+    inventory = json.loads(await snapshot_page_inventory(page, rows=rows, columns=columns, include_empty=include_empty))
+    path = _write_snapshot_file(name, inventory)
+    return _json({
+        "ok": True,
+        "name": _validate_snapshot_name(name),
+        "path": str(path),
+        "page": page,
+        "button_count": inventory.get("button_count"),
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def load_page_inventory_snapshot(name: str) -> str:
+    """Load a previously saved page inventory snapshot from disk."""
+    inventory = _read_snapshot_file(name)
+    return _json({
+        "ok": True,
+        "name": _validate_snapshot_name(name),
+        "path": str(_snapshot_path(name)),
+        "inventory": inventory,
+    })
+
+
+@mcp.tool()
+@_handle_errors
 async def diff_page_inventory(before_inventory_json: str, after_inventory_json: str) -> str:
     """Compare two page inventory snapshots and summarize added, removed, and changed buttons."""
     before = json.loads(before_inventory_json)
@@ -681,6 +767,22 @@ async def preview_restore_page_style_from_inventory(inventory_json: str) -> str:
     return _json({
         "action": "preview_restore_page_style_from_inventory",
         "page": page,
+        "count": len(entries),
+        "writes_companion": False,
+        "preview": entries,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+async def preview_restore_page_style_from_snapshot(name: str, coords_json: str = "") -> str:
+    """Preview a restore plan from a saved snapshot, optionally filtered to selected coordinates."""
+    inventory = _read_snapshot_file(name)
+    entries = _filter_restore_entries(_restore_entries_from_inventory(inventory), coords_json)
+    return _json({
+        "action": "preview_restore_page_style_from_snapshot",
+        "name": _validate_snapshot_name(name),
+        "page": inventory.get("page"),
         "count": len(entries),
         "writes_companion": False,
         "preview": entries,
@@ -1114,6 +1216,83 @@ async def restore_page_style_from_inventory(inventory_json: str, wait_ms: int = 
         raise ValueError("inventory_json must include an integer page.")
     entries = _restore_entries_from_inventory(inventory)
     return await set_page_style_verified(page, json.dumps(entries), wait_ms=wait_ms, poll_ms=poll_ms)
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def restore_selected_page_style_from_inventory(
+    inventory_json: str,
+    coords_json: str,
+    wait_ms: int = 500,
+    poll_ms: int = 100,
+) -> str:
+    """Restore only selected coordinates from a captured page inventory."""
+    inventory = json.loads(inventory_json)
+    if not isinstance(inventory, dict):
+        raise ValueError("inventory_json must be a JSON object.")
+    page = inventory.get("page")
+    if not isinstance(page, int):
+        raise ValueError("inventory_json must include an integer page.")
+    entries = _filter_restore_entries(_restore_entries_from_inventory(inventory), coords_json)
+    return await set_page_style_verified(page, json.dumps(entries), wait_ms=wait_ms, poll_ms=poll_ms)
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def restore_page_style_from_snapshot(name: str, wait_ms: int = 500, poll_ms: int = 100, coords_json: str = "") -> str:
+    """Restore button style state from a saved snapshot file, optionally filtered to selected coordinates."""
+    inventory = _read_snapshot_file(name)
+    page = inventory.get("page")
+    if not isinstance(page, int):
+        raise ValueError("snapshot inventory must include an integer page.")
+    entries = _filter_restore_entries(_restore_entries_from_inventory(inventory), coords_json)
+    result = json.loads(await set_page_style_verified(page, json.dumps(entries), wait_ms=wait_ms, poll_ms=poll_ms))
+    result["snapshot_name"] = _validate_snapshot_name(name)
+    result["snapshot_path"] = str(_snapshot_path(name))
+    return _json(result)
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def apply_page_style_transaction(
+    snapshot_name: str,
+    page: int,
+    buttons_json: str,
+    rows: int = 4,
+    columns: int = 8,
+    include_empty: bool = False,
+    wait_ms: int = 500,
+    poll_ms: int = 100,
+) -> str:
+    """Save a rollback checkpoint, apply verified page style changes, and return the checkpoint metadata."""
+    snapshot_result = json.loads(await save_page_inventory_snapshot(
+        snapshot_name,
+        page,
+        rows=rows,
+        columns=columns,
+        include_empty=include_empty,
+    ))
+    apply_result = json.loads(await set_page_style_verified(page, buttons_json, wait_ms=wait_ms, poll_ms=poll_ms))
+    return _json({
+        "ok": apply_result.get("count", 0) >= 0,
+        "snapshot": snapshot_result,
+        "apply_result": apply_result,
+        "rollback_hint": {
+            "tool": "restore_page_style_from_snapshot",
+            "snapshot_name": _validate_snapshot_name(snapshot_name),
+        },
+    })
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def rollback_page_style_transaction(snapshot_name: str, wait_ms: int = 500, poll_ms: int = 100, coords_json: str = "") -> str:
+    """Rollback page styles from a saved transaction snapshot."""
+    return await restore_page_style_from_snapshot(snapshot_name, wait_ms=wait_ms, poll_ms=poll_ms, coords_json=coords_json)
 
 
 @mcp.tool()

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -304,6 +305,23 @@ async def test_snapshot_page_inventory(mock_get_page_grid):
 
 
 @pytest.mark.asyncio
+@patch("companion_mcp.server.snapshot_page_inventory")
+async def test_save_and_load_page_inventory_snapshot(mock_snapshot_page_inventory, monkeypatch, tmp_path):
+    from companion_mcp.server import save_page_inventory_snapshot, load_page_inventory_snapshot
+    monkeypatch.setenv("COMPANION_SNAPSHOT_DIR", str(tmp_path))
+    mock_snapshot_page_inventory.return_value = json.dumps({
+        "page": 1,
+        "button_count": 1,
+        "buttons": [{"row": 0, "column": 1, "style_meta": {"text": "GO"}}],
+    })
+    saved = json.loads(await save_page_inventory_snapshot("test-snapshot", 1, rows=1, columns=2))
+    assert Path(saved["path"]).exists()
+    loaded = json.loads(await load_page_inventory_snapshot("test-snapshot"))
+    assert loaded["inventory"]["page"] == 1
+
+
+
+@pytest.mark.asyncio
 async def test_diff_page_inventory():
     from companion_mcp.server import diff_page_inventory
     before = json.dumps({
@@ -352,6 +370,19 @@ async def test_preview_restore_page_style_from_inventory():
     result = json.loads(await preview_restore_page_style_from_inventory(inventory))
     assert result["count"] == 1
     assert result["preview"][0]["text"] == "GO"
+    assert result["preview"][0]["color"] == "ffffff"
+
+
+@pytest.mark.asyncio
+async def test_preview_restore_page_style_from_snapshot_via_file(monkeypatch, tmp_path):
+    from companion_mcp.server import preview_restore_page_style_from_snapshot
+    monkeypatch.setenv("COMPANION_SNAPSHOT_DIR", str(tmp_path))
+    (tmp_path / "snap.json").write_text(json.dumps({
+        "page": 1,
+        "buttons": [{"row": 0, "column": 1, "style_meta": {"text": "GO", "color": 16777215}}],
+    }))
+    result = json.loads(await preview_restore_page_style_from_snapshot("snap"))
+    assert result["count"] == 1
     assert result["preview"][0]["color"] == "ffffff"
 
 
@@ -457,6 +488,61 @@ async def test_restore_page_style_from_inventory(mock_set_page_style_verified):
     assert args.args[0] == 1
     restore_entries = json.loads(args.args[1])
     assert restore_entries[0]["text"] == "GO"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.set_page_style_verified")
+async def test_restore_selected_page_style_from_inventory(mock_set_page_style_verified):
+    from companion_mcp.server import restore_selected_page_style_from_inventory
+    mock_set_page_style_verified.return_value = json.dumps({"ok": True, "count": 1})
+    inventory = json.dumps({
+        "page": 1,
+        "buttons": [
+            {"row": 0, "column": 1, "style_meta": {"text": "GO"}},
+            {"row": 0, "column": 2, "style_meta": {"text": "STOP"}},
+        ],
+    })
+    coords = json.dumps([{"row": 0, "column": 2}])
+    result = json.loads(await restore_selected_page_style_from_inventory(inventory, coords))
+    assert result["ok"] is True
+    restore_entries = json.loads(mock_set_page_style_verified.await_args.args[1])
+    assert restore_entries == [{"row": 0, "column": 2, "text": "STOP"}]
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.set_page_style_verified")
+async def test_restore_page_style_from_snapshot(mock_set_page_style_verified, monkeypatch, tmp_path):
+    from companion_mcp.server import restore_page_style_from_snapshot
+    monkeypatch.setenv("COMPANION_SNAPSHOT_DIR", str(tmp_path))
+    (tmp_path / "snap.json").write_text(json.dumps({
+        "page": 1,
+        "buttons": [{"row": 0, "column": 1, "style_meta": {"text": "GO", "color": 16777215}}],
+    }))
+    mock_set_page_style_verified.return_value = json.dumps({"ok": True, "count": 1})
+    result = json.loads(await restore_page_style_from_snapshot("snap"))
+    assert result["snapshot_name"] == "snap"
+    assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.save_page_inventory_snapshot")
+@patch("companion_mcp.server.set_page_style_verified")
+async def test_apply_page_style_transaction(mock_set_page_style_verified, mock_save_snapshot):
+    from companion_mcp.server import apply_page_style_transaction
+    mock_save_snapshot.return_value = json.dumps({"ok": True, "name": "txn-a", "path": "/tmp/txn-a.json"})
+    mock_set_page_style_verified.return_value = json.dumps({"count": 1, "inventory_diff": {"changed_count": 1}})
+    result = json.loads(await apply_page_style_transaction("txn-a", 1, json.dumps([{"row": 0, "column": 1, "text": "GO"}])))
+    assert result["snapshot"]["name"] == "txn-a"
+    assert result["rollback_hint"]["tool"] == "restore_page_style_from_snapshot"
+
+
+@pytest.mark.asyncio
+@patch("companion_mcp.server.restore_page_style_from_snapshot")
+async def test_rollback_page_style_transaction(mock_restore_page_style_from_snapshot):
+    from companion_mcp.server import rollback_page_style_transaction
+    mock_restore_page_style_from_snapshot.return_value = json.dumps({"ok": True, "count": 1})
+    result = json.loads(await rollback_page_style_transaction("txn-a"))
+    assert result["ok"] is True
 
 
 @pytest.mark.asyncio

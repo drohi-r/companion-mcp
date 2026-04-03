@@ -1,9 +1,2 @@
+.companion-snapshots/
 __pycache__/
-*.pyc
-.venv/
-*.egg-info/
-dist/
-build/
-.env
-.DS_Store
-uv.lock
