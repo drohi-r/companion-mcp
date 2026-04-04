@@ -61,6 +61,8 @@ Make sure Companion is running on the target host and port. Current Companion bu
 | `COMPANION_ALLOWED_HOSTS` | `127.0.0.1,localhost,::1` | Comma-separated allowlist for target hosts. Set `*` to allow any. |
 | `COMPANION_WRITE_ENABLED` | `1` | Set to `0` for read-only mode |
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
+| `COMPANION_SNAPSHOT_DIR` | `.companion-snapshots` | Directory for saved page inventory snapshots |
+| `COMPANION_PRESET_DIR` | `.companion-presets` | Directory for saved page style presets |
 | `COMPANION_UI_HOST` | `127.0.0.1` | Browser UI bind address |
 | `COMPANION_UI_PORT` | `8088` | Browser UI port |
 
