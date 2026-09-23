@@ -63,12 +63,14 @@ Make sure Companion is running on the target host and port. Current Companion bu
 | `COMPANION_TRANSPORT` | `stdio` | MCP transport (`stdio`, `sse`, `streamable-http`) |
 | `COMPANION_UI_HOST` | `127.0.0.1` | Browser UI bind address |
 | `COMPANION_UI_PORT` | `8088` | Browser UI port |
+| `COMPANION_SNAPSHOT_DIR` | `.companion-snapshots` | Directory for saved page inventory snapshots |
+| `COMPANION_PRESET_DIR` | `.companion-presets` | Directory for saved page style presets |
 
 ## Architecture
 
 ```mermaid
 graph TD
-    A["Companion MCP Server<br/><code>companion_mcp</code><br/>53 tools · safety gate"] --> B
+    A["Companion MCP Server<br/><code>companion_mcp</code><br/>61 tools · safety gate"] --> B
     B["HTTP Client<br/>Button actions · style writes"] --> D
     A --> C
     C["WebSocket tRPC Client<br/>Discovery · preview · variables"] --> D
@@ -153,6 +155,31 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
 | `set_button_color` | Change text and/or background color (6-digit hex) |
 | `set_button_style` | Set multiple style properties at once |
 | `set_button_style_verified` | Apply style changes and poll until the render catches up or the timeout expires |
+
+> **Companion 5.x note:** The flat-style tools above use the legacy HTTP style API, which is gated per button by `canModifyStyleInApis` (default **off** for user-created buttons). When it is off they now return `{ok:false, reason:"style-api-gated"}` instead of a hollow success. Enable it with `set_button_style_api_access`, or use the layered-styling tools below (tRPC), which are not gated.
+
+### Layered styling (Companion 5.x, tRPC)
+
+| Tool | What it does |
+|------|-------------|
+| `set_button_layered_style` | Rebuild a button's visual layer stack (box/text/image/gauge/…) to match a JSON spec (replace mode; preserves canvas, actions, and feedbacks) |
+| `preview_button_layered_style` | Show the reconcile plan (removes/adds + feedback warnings) without writing |
+| `set_page_layered_style` | Apply layered styles to multiple buttons on a page |
+| `add_button_element` | Add a graphics element to a button's stack |
+| `update_button_element` | Update element properties (hex colors, `{"expr":"…"}` expressions) |
+| `remove_button_element` | Remove a graphics element |
+| `move_button_element` | Reorder a graphics element |
+| `set_button_style_api_access` | Enable/disable the legacy style HTTP API for a button (`canModifyStyleInApis`) |
+
+Layer spec (`layers_json`) is a JSON array, bottom→top. Colors accept `#RRGGBB`; `x/y/width/height` are percentages 0–100; any value may be `{"expr":"<companion expression>"}`:
+
+```json
+[
+  {"type":"box","name":"bg","color":"#101010","cornerRadius":12},
+  {"type":"text","name":"label","text":"START","color":"#FFFFFF","fontsize":22,"valign":"center"},
+  {"type":"gauge","name":"ring","orientation":"ring","value":{"expr":"$(internal:time_s)"},"min":0,"max":60}
+]
+```
 
 ### Batch operations
 

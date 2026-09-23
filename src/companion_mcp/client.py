@@ -237,6 +237,44 @@ class CompanionClient:
     async def trpc_subscription_once(self, path: str, input: dict[str, Any] | None = None) -> dict[str, Any]:
         return await self.trpc_call("subscription", path, input=input)
 
+    async def trpc_mutation(self, path: str, input: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self.trpc_call("mutation", path, input=input)
+
+    async def style_add_element(self, control_id: str, element_type: str,
+                                after: str | None = None) -> dict[str, Any]:
+        return await self.trpc_call(
+            "mutation", "controls.styles.addElement",
+            input={"controlId": control_id, "type": element_type, "afterElementId": after})
+
+    async def style_update_options(self, control_id: str, element_id: str,
+                                   values: dict[str, Any]) -> dict[str, Any]:
+        return await self.trpc_call(
+            "mutation", "controls.styles.updateOptions",
+            input={"controlId": control_id, "elementId": element_id, "values": values})
+
+    async def style_remove_element(self, control_id: str, element_id: str) -> dict[str, Any]:
+        return await self.trpc_call(
+            "mutation", "controls.styles.removeElement",
+            input={"controlId": control_id, "elementId": element_id})
+
+    async def style_move_element(self, control_id: str, element_id: str, new_index: int,
+                                 parent: str | None = None) -> dict[str, Any]:
+        return await self.trpc_call(
+            "mutation", "controls.styles.moveElement",
+            input={"controlId": control_id, "elementId": element_id,
+                   "parentElementId": parent, "newIndex": new_index})
+
+    async def style_set_element_name(self, control_id: str, element_id: str,
+                                     name: str) -> dict[str, Any]:
+        return await self.trpc_call(
+            "mutation", "controls.styles.setElementName",
+            input={"controlId": control_id, "elementId": element_id, "name": name})
+
+    async def set_options_field(self, control_id: str, key: str, value: Any) -> dict[str, Any]:
+        return await self.trpc_call(
+            "mutation", "controls.setOptionsField",
+            input={"controlId": control_id, "key": key, "value": value})
+
     async def button_action(self, page: int, row: int, column: int, action: str) -> dict[str, Any]:
         """Execute a button action: press, down, up, rotate-left, rotate-right, step."""
         return await self.request("POST", f"/api/location/{page}/{row}/{column}/{action}")
@@ -337,6 +375,23 @@ class CompanionClient:
 
     async def get_control_snapshot(self, control_id: str) -> dict[str, Any]:
         return await self.trpc_subscription_once("controls.watchControl", {"controlId": control_id})
+
+    async def resolve_control_id(self, page: int, row: int, column: int) -> str | None:
+        snapshot = await self.get_pages_snapshot()
+        return self._control_id_from_pages_snapshot(snapshot.get("body"), page, row, column)
+
+    async def get_control_config(self, control_id: str) -> dict[str, Any]:
+        snapshot = await self.get_control_snapshot(control_id)
+        body = snapshot.get("body")
+        config = body.get("config") if isinstance(body, dict) else None
+        layers: list[Any] = []
+        if isinstance(config, dict):
+            style = config.get("style")
+            if isinstance(style, dict) and isinstance(style.get("layers"), list):
+                layers = style["layers"]
+        return {"ok": bool(snapshot.get("ok")) and config is not None,
+                "control_id": control_id, "config": config, "layers": layers,
+                "raw": snapshot}
 
     async def get_preview_location(self, page: int, row: int, column: int) -> dict[str, Any]:
         return await self.trpc_subscription_once(

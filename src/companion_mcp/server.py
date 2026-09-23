@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from . import elements
 from .client import CompanionClient
 from .config import load_config
 
@@ -1188,7 +1189,11 @@ async def set_step(page: int, row: int, column: int, step: int) -> str:
 async def set_button_text(page: int, row: int, column: int, text: str) -> str:
     """Change the text displayed on a button."""
     _validate_button_coords(page, row, column)
-    result = await _client().set_style(page, row, column, text=text)
+    client = _client()
+    gate_error, allowed = await _style_api_gate(client, page, row, column)
+    if not allowed:
+        return gate_error
+    result = await client.set_style(page, row, column, text=text)
     return _json(result)
 
 
@@ -1212,7 +1217,11 @@ async def set_button_color(
         style["color"] = color
     if bgcolor:
         style["bgcolor"] = bgcolor
-    result = await _client().set_style(page, row, column, **style)
+    client = _client()
+    gate_error, allowed = await _style_api_gate(client, page, row, column)
+    if not allowed:
+        return gate_error
+    result = await client.set_style(page, row, column, **style)
     return _json(result)
 
 
@@ -1234,8 +1243,266 @@ async def set_button_style(
     _validate_hex_color(color, "color")
     _validate_hex_color(bgcolor, "bgcolor")
     style = _normalize_style_payload({"text": text, "color": color, "bgcolor": bgcolor, "size": size})
-    result = await _client().set_style(page, row, column, **style)
+    client = _client()
+    gate_error, allowed = await _style_api_gate(client, page, row, column)
+    if not allowed:
+        return gate_error
+    result = await client.set_style(page, row, column, **style)
     return _json(result)
+
+
+# ============================================================
+# Layered Styling (Companion 5.x, tRPC controls.styles.*)
+# ============================================================
+
+
+async def _resolve_or_error(client, page: int, row: int, column: int):
+    """Return (control_id, None) or (None, error_json_string)."""
+    control_id = await client.resolve_control_id(page, row, column)
+    if not control_id:
+        return None, _compat_error(
+            f"No control found at page {page}, row {row}, column {column}.",
+            page=page, row=row, column=column)
+    return control_id, None
+
+
+async def _style_api_gate(client, page: int, row: int, column: int):
+    """Return (None, True) if the legacy style HTTP API is enabled for this button,
+    else (error_json_string, False). Fixes the 5.x silent-no-op case."""
+    control_id = await client.resolve_control_id(page, row, column)
+    if not control_id:
+        return _compat_error(
+            f"No control found at page {page}, row {row}, column {column}.",
+            page=page, row=row, column=column), False
+    control = await client.get_control_config(control_id)
+    options = (control.get("config") or {}).get("options") or {}
+    if options.get("canModifyStyleInApis") is not True:
+        return _json({
+            "ok": False, "blocked": True, "reason": "style-api-gated",
+            "control_id": control_id, "page": page, "row": row, "column": column,
+            "hint": ("This button's legacy style API is disabled (canModifyStyleInApis). "
+                     "Enable it with set_button_style_api_access, or use "
+                     "set_button_layered_style (tRPC) which is not gated."),
+        }), False
+    return None, True
+
+
+def _parse_layers_json(layers_json: str) -> list[dict]:
+    layers = json.loads(layers_json)
+    if not isinstance(layers, list):
+        raise ValueError("layers_json must be a JSON array of layer specs.")
+    return layers
+
+
+async def _apply_layered_plan(client, control_id: str, plan: dict) -> dict:
+    """Execute a reconcile plan against a control. Returns applied-op details."""
+    applied: dict[str, Any] = {"canvas_update": None, "removed": [], "added": []}
+
+    if plan.get("canvas_update"):
+        cu = plan["canvas_update"]
+        await client.style_update_options(control_id, cu["elementId"], cu["values"])
+        applied["canvas_update"] = cu["elementId"]
+
+    for element_id in plan["removes"]:
+        await client.style_remove_element(control_id, element_id)
+        applied["removed"].append(element_id)
+
+    # add bottom -> top: first element sits just above canvas
+    prev_id = "canvas"
+    for add in plan["adds"]:
+        add_result = await client.style_add_element(control_id, add["type"], after=prev_id)
+        new_id = add_result.get("body")
+        if not isinstance(new_id, str):
+            raise ValueError(f"addElement did not return an element id: {add_result}")
+        if add.get("name"):
+            await client.style_set_element_name(control_id, new_id, add["name"])
+        if add["values"]:
+            await client.style_update_options(control_id, new_id, add["values"])
+        applied["added"].append({"type": add["type"], "name": add.get("name"),
+                                 "element_id": new_id})
+        prev_id = new_id
+    return applied
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def add_button_element(page: int, row: int, column: int, type: str,
+                             after: str = "") -> str:
+    """Add a graphics element to a button's layer stack (Companion 5.x).
+
+    type: one of box, text, image, gauge, line, circle, group, reference.
+    after: element id to insert above; empty inserts at top of stack.
+    Returns the new element id.
+    """
+    _validate_button_coords(page, row, column)
+    if type not in elements.ADDABLE_TYPES:
+        raise ValueError(f"type must be one of {sorted(elements.ADDABLE_TYPES)}")
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+    result = await client.style_add_element(control_id, type, after=after or None)
+    return _json({"ok": result.get("ok", False), "element_id": result.get("body"),
+                  "control_id": control_id, "result": result})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def update_button_element(page: int, row: int, column: int, element_id: str,
+                                values_json: str) -> str:
+    """Update properties on a button element. values_json is a JSON object of
+    field -> value; colors accept #RRGGBB, and {"expr": "..."} marks an expression."""
+    _validate_button_coords(page, row, column)
+    raw = json.loads(values_json)
+    if not isinstance(raw, dict):
+        raise ValueError("values_json must be a JSON object of field -> value.")
+    values = elements.convert_values(raw)
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+    result = await client.style_update_options(control_id, element_id, values)
+    return _json({"ok": result.get("ok", False), "control_id": control_id,
+                  "element_id": element_id, "values": values, "result": result})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def remove_button_element(page: int, row: int, column: int, element_id: str) -> str:
+    """Remove a graphics element from a button's layer stack."""
+    _validate_button_coords(page, row, column)
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+    result = await client.style_remove_element(control_id, element_id)
+    return _json({"ok": result.get("ok", False), "control_id": control_id,
+                  "element_id": element_id, "result": result})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def move_button_element(page: int, row: int, column: int, element_id: str,
+                              new_index: int, parent: str = "") -> str:
+    """Move a graphics element to a new index within its parent stack."""
+    _validate_button_coords(page, row, column)
+    if new_index < 0:
+        raise ValueError("new_index must be >= 0")
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+    result = await client.style_move_element(control_id, element_id, new_index,
+                                             parent=parent or None)
+    return _json({"ok": result.get("ok", False), "control_id": control_id,
+                  "element_id": element_id, "result": result})
+
+
+@mcp.tool()
+@_handle_errors
+async def preview_button_layered_style(page: int, row: int, column: int,
+                                       layers_json: str) -> str:
+    """Preview the reconcile plan for a layered-style change WITHOUT writing.
+
+    Returns the removes/adds/canvas_update plan plus any feedbacks that reference
+    elements the plan would remove.
+    """
+    _validate_button_coords(page, row, column)
+    desired = _parse_layers_json(layers_json)
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+    control = await client.get_control_config(control_id)
+    plan = elements.reconcile(control["layers"], desired)
+    warnings = elements.find_feedback_element_refs(control.get("config") or {},
+                                                   plan["removes"])
+    return _json({"ok": True, "control_id": control_id, "plan": plan,
+                  "feedback_warnings": warnings})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def set_button_layered_style(page: int, row: int, column: int,
+                                   layers_json: str, verify: bool = False) -> str:
+    """Reconcile a button's visual layer stack to match layers_json (replace mode).
+
+    Canvas and the button's actions/feedbacks are preserved; all other visual
+    layers are rebuilt. Captures the before-state and warns if a feedback referenced
+    a removed element. See preview_button_layered_style to inspect the plan first.
+    """
+    _validate_button_coords(page, row, column)
+    desired = _parse_layers_json(layers_json)
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+
+    control = await client.get_control_config(control_id)
+    plan = elements.reconcile(control["layers"], desired)
+    warnings = elements.find_feedback_element_refs(control.get("config") or {},
+                                                   plan["removes"])
+    before = control.get("layers")
+
+    applied = await _apply_layered_plan(client, control_id, plan)
+
+    verified = None
+    if verify:
+        after = await client.get_control_config(control_id)
+        verified = {"changed": after.get("layers") != before}
+
+    return _json({"ok": True, "control_id": control_id, "applied": applied,
+                  "feedback_warnings": warnings, "verified": verified,
+                  "snapshot_before": {"layers": before}})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def set_page_layered_style(page: int, buttons_json: str, verify: bool = False) -> str:
+    """Apply layered styles to multiple buttons on a page.
+
+    buttons_json: JSON array of {row, column, layers:[...]} objects, where layers
+    matches the set_button_layered_style spec. Applies each button in order.
+    """
+    _validate_page(page)
+    buttons = json.loads(buttons_json)
+    if not isinstance(buttons, list):
+        raise ValueError("buttons_json must be a JSON array of {row, column, layers} objects.")
+
+    results = []
+    for i, btn in enumerate(buttons):
+        if (not isinstance(btn, dict) or "row" not in btn or "column" not in btn
+                or "layers" not in btn):
+            raise ValueError(f"Button at index {i} must have row, column, and layers fields.")
+        one = await set_button_layered_style(
+            page, btn["row"], btn["column"], json.dumps(btn["layers"]), verify=verify)
+        results.append(json.loads(one))
+
+    return _json({"ok": True, "page": page, "count": len(results), "results": results})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def set_button_style_api_access(page: int, row: int, column: int, enabled: bool) -> str:
+    """Enable/disable the legacy style HTTP API for a button (canModifyStyleInApis).
+
+    Companion 5.x defaults this to false for user-created buttons, which makes the
+    legacy set_button_style/color/text tools no-op. Enable it to use them."""
+    _validate_button_coords(page, row, column)
+    client = _client()
+    control_id, error = await _resolve_or_error(client, page, row, column)
+    if error:
+        return error
+    result = await client.set_options_field(control_id, "canModifyStyleInApis", enabled)
+    return _json({"ok": result.get("ok", False), "control_id": control_id,
+                  "canModifyStyleInApis": enabled, "result": result})
 
 
 # ============================================================
@@ -1324,9 +1591,14 @@ async def set_page_style(page: int, buttons_json: str) -> str:
         if not isinstance(btn, dict) or "row" not in btn or "column" not in btn:
             raise ValueError("Each button must have row and column fields.")
         _validate_row_column(btn["row"], btn["column"])
+        button_ref = {"page": page, "row": btn["row"], "column": btn["column"]}
+        gate_error, allowed = await _style_api_gate(client, page, btn["row"], btn["column"])
+        if not allowed:
+            results.append({"button": button_ref, "result": json.loads(gate_error)})
+            continue
         style = _normalize_style_payload(btn)
         result = await client.set_style(page, btn["row"], btn["column"], **style)
-        results.append({"button": {"page": page, "row": btn["row"], "column": btn["column"]}, "result": result})
+        results.append({"button": button_ref, "result": result})
 
     return _json({"action": "set_page_style", "page": page, "count": len(results), "results": results})
 

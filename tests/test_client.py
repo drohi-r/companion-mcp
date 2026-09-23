@@ -204,3 +204,90 @@ async def test_get_page_grid_current_skips_empty_buttons():
     assert result["body"]["buttons"][0]["style_meta"]["text"] == "GO"
     assert result["body"]["buttons"][0]["feedback_meta"]["count"] == 0
     assert result["body"]["buttons"][0]["preview_meta"]["image_sha256"]
+
+
+# --- 5.x layered-styling client methods ---
+from unittest.mock import AsyncMock as _AsyncMock  # noqa: E402
+from companion_mcp.client import CompanionClient as _CC  # noqa: E402
+from companion_mcp.config import CompanionConfig as _CFG  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_style_add_element_calls_mutation():
+    client = _CC(_CFG())
+    client.trpc_call = _AsyncMock(return_value={"ok": True, "body": "text9"})
+    result = await client.style_add_element("bank:abc", "text", after="canvas")
+    assert result["body"] == "text9"
+    client.trpc_call.assert_awaited_once_with(
+        "mutation", "controls.styles.addElement",
+        input={"controlId": "bank:abc", "type": "text", "afterElementId": "canvas"})
+
+
+@pytest.mark.asyncio
+async def test_style_update_options_calls_mutation():
+    client = _CC(_CFG())
+    client.trpc_call = _AsyncMock(return_value={"ok": True, "body": None})
+    values = {"color": {"value": 255, "isExpression": False}}
+    await client.style_update_options("bank:abc", "text9", values)
+    client.trpc_call.assert_awaited_once_with(
+        "mutation", "controls.styles.updateOptions",
+        input={"controlId": "bank:abc", "elementId": "text9", "values": values})
+
+
+@pytest.mark.asyncio
+async def test_style_remove_and_move_and_name():
+    client = _CC(_CFG())
+    client.trpc_call = _AsyncMock(return_value={"ok": True})
+    await client.style_remove_element("bank:abc", "text9")
+    await client.style_move_element("bank:abc", "text9", 2, parent=None)
+    await client.style_set_element_name("bank:abc", "text9", "label")
+    paths = [c.args[1] for c in client.trpc_call.await_args_list]
+    assert paths == ["controls.styles.removeElement",
+                     "controls.styles.moveElement",
+                     "controls.styles.setElementName"]
+
+
+@pytest.mark.asyncio
+async def test_set_options_field_calls_mutation():
+    client = _CC(_CFG())
+    client.trpc_call = _AsyncMock(return_value={"ok": True})
+    await client.set_options_field("bank:abc", "canModifyStyleInApis", True)
+    client.trpc_call.assert_awaited_once_with(
+        "mutation", "controls.setOptionsField",
+        input={"controlId": "bank:abc", "key": "canModifyStyleInApis", "value": True})
+
+
+@pytest.mark.asyncio
+async def test_resolve_control_id_uses_pages_snapshot():
+    client = _CC(_CFG())
+    client.get_pages_snapshot = _AsyncMock(return_value={"ok": True, "body": {
+        "order": ["p1", "p2"],
+        "pages": {"p2": {"controls": {"0": {"3": "bank:xyz"}}}},
+    }})
+    assert await client.resolve_control_id(2, 0, 3) == "bank:xyz"
+    assert await client.resolve_control_id(2, 5, 5) is None
+
+
+@pytest.mark.asyncio
+async def test_get_control_config_extracts_config():
+    client = _CC(_CFG())
+    client.get_control_snapshot = _AsyncMock(return_value={"ok": True, "body": {
+        "type": "init",
+        "config": {"type": "button-layered",
+                   "options": {"canModifyStyleInApis": False},
+                   "style": {"layers": [{"id": "canvas", "type": "canvas"}]}},
+    }})
+    out = await client.get_control_config("bank:xyz")
+    assert out["ok"] is True
+    assert out["config"]["options"]["canModifyStyleInApis"] is False
+    assert out["layers"] == [{"id": "canvas", "type": "canvas"}]
+
+
+@pytest.mark.asyncio
+async def test_get_control_config_handles_missing():
+    client = _CC(_CFG())
+    client.get_control_snapshot = _AsyncMock(return_value={"ok": False, "body": None})
+    out = await client.get_control_config("bank:xyz")
+    assert out["ok"] is False
+    assert out["config"] is None
+    assert out["layers"] == []

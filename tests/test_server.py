@@ -671,6 +671,10 @@ async def test_write_tool_blocked_when_writes_disabled(monkeypatch):
 async def test_set_button_text(mock_client_factory):
     from companion_mcp.server import set_button_text
     fake = MagicMock()
+    # legacy style API is gated per-button in 5.x; open the gate for this button
+    fake.resolve_control_id = AsyncMock(return_value="bank:xyz")
+    fake.get_control_config = AsyncMock(return_value={
+        "ok": True, "config": {"options": {"canModifyStyleInApis": True}}, "layers": []})
     fake.set_style = AsyncMock(return_value={"ok": True})
     mock_client_factory.return_value = fake
 
