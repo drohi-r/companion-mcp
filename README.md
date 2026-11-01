@@ -7,11 +7,11 @@
 <p align="center">
   <a href="https://github.com/drohi-r/companion-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-orange?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=for-the-badge" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/MCP_Tools-53-14B8A6?style=for-the-badge" alt="53 MCP Tools">
-  <img src="https://img.shields.io/badge/Tests-74-14B8A6?style=for-the-badge" alt="74 Tests">
+  <img src="https://img.shields.io/badge/MCP_Tools-71-14B8A6?style=for-the-badge" alt="53 MCP Tools">
+  <img src="https://img.shields.io/badge/Tests-83-14B8A6?style=for-the-badge" alt="74 Tests">
 </p>
 
-An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 53 tools covering verified button control, styling, page discovery, runtime summaries, inventory diffing, checkpointed rollback/restore workflows, preset management, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
+An MCP server for [Bitfocus Companion](https://bitfocus.io/companion). Exposes 71 tools covering verified button control, styling, page discovery, runtime summaries, inventory diffing, checkpointed rollback/restore workflows, preset management, variable management, and batch show programming — so AI assistants can operate Stream Deck surfaces and other Companion-connected devices through Companion's current APIs.
 
 Built for live production. Pairs with [grandMA2 MCP](https://github.com/drohi-r/grandma2-mcp), [Resolume MCP](https://github.com/drohi-r/resolume-mcp), [MADRIX MCP](https://github.com/drohi-r/madrix-mcp), and [Beyond MCP](https://github.com/drohi-r/beyond-mcp) for full AI-driven show control.
 
@@ -177,6 +177,28 @@ Require `COMPANION_WRITE_ENABLED=1` (default).
 | `set_custom_variable` | Write a Companion custom variable |
 | `rescan_surfaces` | Rescan connected USB surfaces |
 | `press_bank_button` | Legacy bank API (deprecated, still works) |
+
+### Native control (connections, pages, buttons, actions, import/export)
+
+Uses the same websocket tRPC API as the Companion web UI. All writes respect `COMPANION_WRITE_ENABLED`.
+
+| Tool | What it does | Safety |
+|---|---|---|
+| `list_connections` | Connections with id, label, module, enabled | read |
+| `set_connection_enabled` | Enable/disable a connection (by id or label) | verified; enabling starts device traffic |
+| `list_entity_definitions` | Action/feedback ids + option schemas for a connection | only running connections publish definitions |
+| `list_pages` / `insert_page` / `rename_page` | Page management | |
+| `clear_page` / `remove_page` | Delete page contents / page | `confirm=true` + automatic page export backup |
+| `create_button` | Create empty layered or nav button | refuses occupied slot unless `overwrite=true` |
+| `delete_button` | Delete a button | `confirm=true` |
+| `transfer_buttons` | Copy / move / swap whole buttons | |
+| `list_button_entities` | Actions per step/set and feedbacks with option values | read |
+| `add_button_action` / `add_button_feedback` | Add entity and set options | re-reads button, reports mismatched options |
+| `set_button_entity_option` / `remove_button_entity` | Edit / remove an entity | verified |
+| `export_page_config` | Native page export (`.companionconfig`) | read |
+| `import_page_config` | Import a page export into a page (or `-1` = new page) | `confirm_overwrite=true` + backup; connections auto-matched; unmatched ignored unless `allow_create_connections`; imported connections never auto-enabled; single websocket session |
+
+Backups go to `$COMPANION_SNAPSHOT_DIR/page-exports/` (default `.companion-snapshots/page-exports/`).
 
 ## Claude Desktop
 

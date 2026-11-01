@@ -237,6 +237,169 @@ class CompanionClient:
     async def trpc_subscription_once(self, path: str, input: dict[str, Any] | None = None) -> dict[str, Any]:
         return await self.trpc_call("subscription", path, input=input)
 
+    async def trpc_mutation(self, path: str, input: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self.trpc_call("mutation", path, input=input)
+
+    def session(self) -> "TrpcSession":
+        """Open a single websocket for multi-step flows that rely on per-connection server state (e.g. import)."""
+        return TrpcSession(self)
+
+    # ---- native control: connections, definitions, pages, controls, entities, import/export ----
+
+    async def list_connections(self) -> dict[str, Any]:
+        return await self.trpc_subscription_once("instances.connections.watch")
+
+    async def set_connection_enabled(self, connection_id: str, enabled: bool) -> dict[str, Any]:
+        return await self.trpc_mutation(
+            "instances.connections.setEnabled", {"connectionId": connection_id, "enabled": enabled}
+        )
+
+    async def get_entity_definitions(self, entity_type: str) -> dict[str, Any]:
+        path = "instances.definitions.actions" if entity_type == "action" else "instances.definitions.feedbacks"
+        return await self.trpc_subscription_once(path)
+
+    async def insert_page(self, page_number: int, name: str) -> dict[str, Any]:
+        return await self.trpc_mutation("pages.insert", {"asPageNumber": page_number, "pageNames": [name]})
+
+    async def remove_page(self, page_number: int) -> dict[str, Any]:
+        return await self.trpc_mutation("pages.remove", {"pageNumber": page_number})
+
+    async def clear_page(self, page_number: int) -> dict[str, Any]:
+        return await self.trpc_mutation("pages.clearPage", {"pageNumber": page_number})
+
+    async def set_page_name(self, page_number: int, name: str) -> dict[str, Any]:
+        return await self.trpc_mutation("pages.setName", {"pageNumber": page_number, "name": name})
+
+    async def reset_controls(self, locations: list[dict[str, int]], new_type: str | None) -> dict[str, Any]:
+        return await self.trpc_mutation("controls.resetControls", {"locations": locations, "newType": new_type})
+
+    async def grid_batch_transfer(self, operation: str, pairs: list[dict[str, Any]]) -> dict[str, Any]:
+        return await self.trpc_mutation("controls.gridBatchTransfer", {"operation": operation, "pairs": pairs})
+
+    async def get_control_id_at(self, page: int, row: int, column: int) -> str | None:
+        snapshot = await self.get_pages_snapshot()
+        if not snapshot.get("ok"):
+            return None
+        return self._control_id_from_pages_snapshot(snapshot.get("body"), page, row, column)
+
+    async def entity_add(
+        self,
+        control_id: str,
+        entity_location: Any,
+        connection_id: str,
+        entity_type: str,
+        definition_id: str,
+        owner_id: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return await self.trpc_mutation(
+            "controls.entities.add",
+            {
+                "controlId": control_id,
+                "entityLocation": entity_location,
+                "ownerId": owner_id,
+                "connectionId": connection_id,
+                "entityType": entity_type,
+                "entityDefinition": definition_id,
+            },
+        )
+
+    async def entity_set_option(
+        self, control_id: str, entity_location: Any, entity_id: str, key: str, value: Any, is_expression: bool = False
+    ) -> dict[str, Any]:
+        return await self.trpc_mutation(
+            "controls.entities.setOption",
+            {
+                "controlId": control_id,
+                "entityLocation": entity_location,
+                "entityId": entity_id,
+                "key": key,
+                "value": {"value": value, "isExpression": is_expression},
+            },
+        )
+
+    async def entity_remove(self, control_id: str, entity_location: Any, entity_id: str) -> dict[str, Any]:
+        return await self.trpc_mutation(
+            "controls.entities.remove",
+            {"controlId": control_id, "entityLocation": entity_location, "entityId": entity_id},
+        )
+
+    async def export_page_config(self, page: int) -> dict[str, Any]:
+        client = await self._http()
+        url = f"{self.config.base_url}/int/export/page/{page}"
+        response = await client.get(url, params={"format": "json"})
+        result: dict[str, Any] = {"ok": response.is_success, "status_code": response.status_code, "url": url}
+        if response.is_success:
+            try:
+                result["body"] = json.loads(response.text)
+            except json.JSONDecodeError:
+                result["ok"] = False
+                result["error"] = "Export did not return JSON."
+        return result
+
+    async def import_page_config(
+        self,
+        data: bytes,
+        *,
+        filename: str,
+        source_page: int,
+        target_page: int,
+        remap_fn: Any,
+        chunk_size: int = 1024 * 1024,
+    ) -> dict[str, Any]:
+        """Run prepareImport(start/uploadChunk/complete) + importSinglePage on ONE websocket.
+
+        Companion keeps the staged import on the websocket connection context, so these calls
+        must share a socket. remap_fn(import_connections) -> {sourceConnectionId: targetId|"_ignore"}.
+        """
+        steps: list[dict[str, Any]] = []
+        async with self.session() as sess:
+            started = await sess.call("mutation", "importExport.prepareImport.start", {"name": filename, "size": len(data)})
+            steps.append({"step": "start", "ok": started.get("ok")})
+            session_id = started.get("body")
+            if not started.get("ok") or not session_id:
+                return {"ok": False, "error": "Failed to start import session.", "detail": started, "steps": steps}
+            try:
+                for offset in range(0, len(data), chunk_size):
+                    chunk = data[offset : offset + chunk_size]
+                    res = await sess.call(
+                        "mutation",
+                        "importExport.prepareImport.uploadChunk",
+                        {"sessionId": session_id, "offset": offset, "data": base64.b64encode(chunk).decode("ascii")},
+                    )
+                    if not res.get("ok") or res.get("body") in (None, False):
+                        raise RuntimeError(f"Upload chunk at offset {offset} failed: {res}")
+                steps.append({"step": "upload", "ok": True, "bytes": len(data)})
+                done = await sess.call(
+                    "mutation",
+                    "importExport.prepareImport.complete",
+                    {"sessionId": session_id, "expectedChecksum": hashlib.sha1(data).hexdigest(), "userData": None},
+                )
+            except Exception as exc:
+                await sess.call("mutation", "importExport.prepareImport.cancel", {"sessionId": session_id})
+                return {"ok": False, "error": str(exc), "steps": steps}
+            body = done.get("body")
+            if not done.get("ok") or not isinstance(body, list) or len(body) != 2 or body[0] or not body[1]:
+                return {"ok": False, "error": "Companion rejected the import file.", "detail": done, "steps": steps}
+            info = body[1]
+            if info.get("type") not in ("page", "full"):
+                await sess.call("mutation", "importExport.abort", None)
+                return {"ok": False, "error": f"Unsupported import type {info.get('type')!r}.", "steps": steps}
+            remap = remap_fn(info.get("connections") or {})
+            steps.append({"step": "prepare", "ok": True, "import_type": info.get("type")})
+            imported = await sess.call(
+                "mutation",
+                "importExport.importSinglePage",
+                {"sourcePage": source_page, "targetPage": target_page, "connectionIdRemapping": remap},
+            )
+            steps.append({"step": "importSinglePage", "ok": imported.get("ok")})
+            return {
+                "ok": bool(imported.get("ok")),
+                "error": imported.get("error"),
+                "remap_requested": remap,
+                "connection_result": imported.get("body"),
+                "steps": steps,
+            }
+
     async def button_action(self, page: int, row: int, column: int, action: str) -> dict[str, Any]:
         """Execute a button action: press, down, up, rotate-left, rotate-right, step."""
         return await self.request("POST", f"/api/location/{page}/{row}/{column}/{action}")
@@ -519,3 +682,33 @@ class CompanionClient:
                 "buttons": buttons,
             },
         }
+
+
+class TrpcSession:
+    """Async context manager holding one Companion tRPC websocket for multi-call flows."""
+
+    def __init__(self, client: CompanionClient) -> None:
+        self._client = client
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._next_id = 0
+
+    async def __aenter__(self) -> "TrpcSession":
+        self._reader, self._writer = await self._client._ws_connect()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        if self._writer is not None:
+            await self._client._ws_close(self._writer)
+
+    async def call(self, method: str, path: str, input: dict[str, Any] | None = None) -> dict[str, Any]:
+        assert self._reader is not None and self._writer is not None, "session not open"
+        self._next_id += 1
+        params: dict[str, Any] = {"path": path}
+        if input is not None:
+            params["input"] = input
+        await self._client._ws_send_json(self._writer, {"id": self._next_id, "method": method, "params": params})
+        result = await self._client._trpc_receive_until_result(self._reader, self._writer, self._next_id)
+        result["path"] = path
+        result["method"] = method
+        return result

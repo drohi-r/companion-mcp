@@ -1659,6 +1659,568 @@ async def apply_button_template(
 
 
 # ============================================================
+# Native Control (connections, definitions, pages, buttons, entities, import/export)
+# ============================================================
+
+_SET_IDS = ("down", "up", "rotate_left", "rotate_right")
+_BUTTON_TYPES = ("button-layered", "pageup", "pagedown", "pagenum")
+_TRANSFER_OPS = ("copy", "move", "swap")
+
+
+def _write_failed(result: dict[str, Any]) -> bool:
+    """Companion mutations often 'succeed' at the transport level but return null/false/'fail'."""
+    if not result.get("ok"):
+        return True
+    body = result.get("body")
+    return body is False or body == "fail"
+
+
+def _entity_location(location: str, step: str) -> Any:
+    if location == "feedbacks":
+        return "feedbacks"
+    if location in _SET_IDS:
+        return {"stepId": str(step), "setId": location}
+    try:
+        return {"stepId": str(step), "setId": int(location)}  # duration-group set ids are numeric
+    except ValueError:
+        raise ValueError(f"location must be one of {_SET_IDS + ('feedbacks',)} or a numeric duration set id.") from None
+
+
+def _page_export_dir() -> Path:
+    return _snapshot_dir() / "page-exports"
+
+
+def _write_page_export(label: str, page: int, payload: dict[str, Any]) -> Path:
+    from datetime import datetime
+
+    directory = _page_export_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = directory / f"{stamp}-page{page}-{_validate_snapshot_name(label)}.companionconfig"
+    path.write_text(json.dumps(payload, indent=1))
+    return path
+
+
+async def _backup_page(client: CompanionClient, page: int, label: str) -> dict[str, Any]:
+    exported = await client.export_page_config(page)
+    if not exported.get("ok"):
+        return {"ok": False, "error": "Could not export page for backup; refusing destructive change.", "detail": exported}
+    path = _write_page_export(label, page, exported["body"])
+    return {"ok": True, "path": str(path.resolve())}
+
+
+async def _page_count(client: CompanionClient) -> int:
+    snap = await client.get_pages_snapshot()
+    order = (snap.get("body") or {}).get("order") if snap.get("ok") else None
+    if not isinstance(order, list):
+        raise ValueError("Could not read Companion page list.")
+    return len(order)
+
+
+async def _connections_map(client: CompanionClient) -> dict[str, dict[str, Any]]:
+    result = await client.list_connections()
+    if not result.get("ok"):
+        raise ValueError(f"Could not list connections: {result.get('error')}")
+    body = result.get("body")
+    if isinstance(body, list):
+        body = next((item for item in body if isinstance(item, dict) and item.get("type") == "init"), {})
+    info = (body or {}).get("info") or {}
+    return {cid: c for cid, c in info.items() if isinstance(c, dict) and c.get("moduleType", "connection") == "connection"}
+
+
+def _resolve_connection(connections: dict[str, dict[str, Any]], ref: str) -> str:
+    if ref == "internal":
+        return "internal"
+    if ref in connections:
+        return ref
+    matches = [cid for cid, c in connections.items() if str(c.get("label", "")).lower() == ref.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    raise ValueError(f"Unknown connection {ref!r}. Known labels: {sorted(c.get('label') for c in connections.values())}")
+
+
+def _compact_option(opt: dict[str, Any]) -> dict[str, Any]:
+    out = {k: opt[k] for k in ("id", "type", "label", "default", "min", "max") if k in opt}
+    if isinstance(opt.get("choices"), list):
+        out["choices"] = [c.get("id") for c in opt["choices"][:50] if isinstance(c, dict)]
+    return out
+
+
+async def _control_entities(client: CompanionClient, control_id: str) -> dict[str, Any]:
+    snap = await client.get_control_snapshot(control_id)
+    body = snap.get("body") or {}
+    return (body.get("config") or {}) if isinstance(body, dict) else {}
+
+
+def _find_entity(config: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
+    stack: list[Any] = [config.get("feedbacks"), config.get("steps")]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if node.get("id") == entity_id and "definitionId" in node:
+                return node
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return None
+
+
+def _summarize_entities(config: dict[str, Any]) -> dict[str, Any]:
+    def brief(e: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": e.get("id"),
+            "connectionId": e.get("connectionId"),
+            "definitionId": e.get("definitionId"),
+            "options": {k: (v.get("value") if isinstance(v, dict) else v) for k, v in (e.get("options") or {}).items()},
+            "disabled": e.get("disabled", False),
+        }
+
+    steps = {}
+    for step_id, step in (config.get("steps") or {}).items():
+        steps[step_id] = {
+            set_id: [brief(a) for a in actions or []] for set_id, actions in (step.get("action_sets") or {}).items()
+        }
+    return {
+        "type": config.get("type"),
+        "steps": steps,
+        "feedbacks": [brief(f) for f in config.get("feedbacks") or []],
+    }
+
+
+async def _require_control(client: CompanionClient, page: int, row: int, column: int) -> str:
+    _validate_button_coords(page, row, column)
+    control_id = await client.get_control_id_at(page, row, column)
+    if not control_id:
+        raise ValueError(f"No button at page {page} row {row} column {column}. Use create_button first.")
+    return control_id
+
+
+@mcp.tool()
+@_handle_errors
+async def list_connections() -> str:
+    """List Companion connections (id, label, module, version, enabled)."""
+    connections = await _connections_map(_client())
+    items = [
+        {
+            "id": cid,
+            "label": c.get("label"),
+            "moduleId": c.get("moduleId"),
+            "moduleVersionId": c.get("moduleVersionId"),
+            "enabled": c.get("enabled"),
+        }
+        for cid, c in sorted(connections.items(), key=lambda kv: kv[1].get("sortOrder", 0))
+    ]
+    return _json({"ok": True, "count": len(items), "connections": items})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def set_connection_enabled(connection: str, enabled: bool) -> str:
+    """Enable or disable a connection (by id or label). Enabling starts network traffic to that device."""
+    client = _client()
+    connection_id = _resolve_connection(await _connections_map(client), connection)
+    if connection_id == "internal":
+        raise ValueError("The internal connection cannot be toggled.")
+    result = await client.set_connection_enabled(connection_id, enabled)
+    after = (await _connections_map(client)).get(connection_id, {})
+    verified = after.get("enabled") == enabled
+    return _json({"ok": bool(result.get("ok")) and verified, "connection_id": connection_id, "label": after.get("label"),
+                  "enabled": after.get("enabled"), "verified": verified})
+
+
+@mcp.tool()
+@_handle_errors
+async def list_entity_definitions(connection: str, entity_type: str = "action", query: str = "", include_options: bool = True) -> str:
+    """List action or feedback definitions for a connection (id or label, or 'internal').
+
+    Definitions are only published by RUNNING connections; a disabled connection returns none.
+    query filters by id/label substring.
+    """
+    if entity_type not in ("action", "feedback"):
+        raise ValueError("entity_type must be 'action' or 'feedback'.")
+    client = _client()
+    connections = await _connections_map(client)
+    connection_id = _resolve_connection(connections, connection)
+    result = await client.get_entity_definitions(entity_type)
+    if not result.get("ok"):
+        return _error("Could not read definitions.", detail=result.get("error"))
+    body = result.get("body") or {}
+    defs = ((body.get("definitions") or {}) if isinstance(body, dict) else {}).get(connection_id)
+    if not defs:
+        enabled = connections.get(connection_id, {}).get("enabled")
+        return _error(
+            f"No {entity_type} definitions published for {connection!r}.",
+            blocked=True,
+            connection_enabled=enabled,
+            hint="Connection must be enabled and running to publish definitions." if not enabled else "Module may still be starting.",
+        )
+    q = query.lower()
+    items = []
+    for def_id, d in defs.items():
+        if q and q not in def_id.lower() and q not in str(d.get("label", "")).lower():
+            continue
+        item = {"id": def_id, "label": d.get("label")}
+        if entity_type == "feedback":
+            item["feedbackType"] = d.get("feedbackType")
+        if include_options:
+            item["options"] = [_compact_option(o) for o in d.get("options") or [] if isinstance(o, dict)]
+        items.append(item)
+    return _json({"ok": True, "connection_id": connection_id, "entity_type": entity_type, "count": len(items), "definitions": items})
+
+
+@mcp.tool()
+@_handle_errors
+async def list_pages() -> str:
+    """List pages with number, id, name and number of buttons."""
+    snap = await _client().get_pages_snapshot()
+    if not snap.get("ok"):
+        return _error("Could not read pages.", detail=snap.get("error"))
+    body = snap.get("body") or {}
+    pages = []
+    for idx, page_id in enumerate(body.get("order") or [], start=1):
+        info = (body.get("pages") or {}).get(page_id) or {}
+        count = sum(len(cols) for cols in (info.get("controls") or {}).values() if isinstance(cols, dict))
+        pages.append({"page": idx, "id": page_id, "name": info.get("name"), "buttons": count})
+    return _json({"ok": True, "count": len(pages), "pages": pages})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def insert_page(page_number: int, name: str = "New Page") -> str:
+    """Insert a new page at page_number (existing pages shift up). Use page count + 1 to append."""
+    client = _client()
+    count = await _page_count(client)
+    if page_number < 1 or page_number > count + 1:
+        raise ValueError(f"page_number must be between 1 and {count + 1}.")
+    result = await client.insert_page(page_number, name)
+    return _json({"ok": not _write_failed(result), "page": page_number, "name": name, "result": result.get("body")})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def rename_page(page: int, name: str) -> str:
+    """Rename a page."""
+    _validate_page(page)
+    result = await _client().set_page_name(page, name)
+    return _json({"ok": not _write_failed(result), "page": page, "name": name})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def clear_page(page: int, confirm: bool = False) -> str:
+    """Delete every button on a page (nav buttons are recreated). Requires confirm=true; exports a backup first."""
+    _validate_page(page)
+    if not confirm:
+        raise ValueError("clear_page deletes all buttons on the page; call again with confirm=true.")
+    client = _client()
+    backup = await _backup_page(client, page, "before-clear")
+    if not backup["ok"]:
+        return _json(backup)
+    result = await client.clear_page(page)
+    return _json({"ok": not _write_failed(result), "page": page, "backup": backup["path"]})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def remove_page(page: int, confirm: bool = False) -> str:
+    """Delete a page and its buttons (later pages shift down). Requires confirm=true; exports a backup first."""
+    _validate_page(page)
+    if not confirm:
+        raise ValueError("remove_page deletes the page and all its buttons; call again with confirm=true.")
+    client = _client()
+    backup = await _backup_page(client, page, "before-remove")
+    if not backup["ok"]:
+        return _json(backup)
+    result = await client.remove_page(page)
+    return _json({"ok": not _write_failed(result), "page": page, "backup": backup["path"], "result": result.get("body")})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def create_button(page: int, row: int, column: int, button_type: str = "button-layered", overwrite: bool = False) -> str:
+    """Create an empty button (or nav button: pageup/pagedown/pagenum). Refuses occupied slots unless overwrite=true."""
+    _validate_button_coords(page, row, column)
+    if button_type not in _BUTTON_TYPES:
+        raise ValueError(f"button_type must be one of {_BUTTON_TYPES}.")
+    client = _client()
+    existing = await client.get_control_id_at(page, row, column)
+    if existing and not overwrite:
+        raise ValueError(f"Slot page {page} row {row} column {column} already has a button ({existing}); pass overwrite=true to replace it.")
+    await client.reset_controls([{"pageNumber": page, "row": row, "column": column}], button_type)
+    control_id = await client.get_control_id_at(page, row, column)
+    return _json({"ok": bool(control_id), "control_id": control_id, "type": button_type, "replaced": existing})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def delete_button(page: int, row: int, column: int, confirm: bool = False) -> str:
+    """Delete the button at a location (actions, feedbacks, style). Requires confirm=true."""
+    _validate_button_coords(page, row, column)
+    if not confirm:
+        raise ValueError("delete_button removes the button entirely; call again with confirm=true.")
+    client = _client()
+    existing = await client.get_control_id_at(page, row, column)
+    if not existing:
+        return _json({"ok": True, "deleted": None, "note": "Slot was already empty."})
+    await client.reset_controls([{"pageNumber": page, "row": row, "column": column}], None)
+    remaining = await client.get_control_id_at(page, row, column)
+    return _json({"ok": remaining is None, "deleted": existing})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def transfer_buttons(operation: str, pairs_json: str) -> str:
+    """Copy, move or swap whole buttons (actions + feedbacks + style).
+
+    pairs_json: JSON array of {"from": {page,row,column}, "to": {page,row,column}}.
+    copy/move overwrite the destination.
+    """
+    if operation not in _TRANSFER_OPS:
+        raise ValueError(f"operation must be one of {_TRANSFER_OPS}.")
+    raw = json.loads(pairs_json)
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("pairs_json must be a non-empty JSON array.")
+    pairs = []
+    for item in raw:
+        src, dst = item.get("from") or {}, item.get("to") or {}
+        for loc in (src, dst):
+            _validate_button_coords(int(loc.get("page", 0)), int(loc.get("row", -1)), int(loc.get("column", -1)))
+        pairs.append({
+            "fromLocation": {"pageNumber": int(src["page"]), "row": int(src["row"]), "column": int(src["column"])},
+            "toLocation": {"pageNumber": int(dst["page"]), "row": int(dst["row"]), "column": int(dst["column"])},
+        })
+    result = await _client().grid_batch_transfer(operation, pairs)
+    return _json({"ok": not _write_failed(result), "operation": operation, "count": len(pairs), "result": result.get("body")})
+
+
+@mcp.tool()
+@_handle_errors
+async def list_button_entities(page: int, row: int, column: int) -> str:
+    """List a button's actions (per step and set) and feedbacks with ids and option values."""
+    client = _client()
+    control_id = await _require_control(client, page, row, column)
+    config = await _control_entities(client, control_id)
+    return _json({"ok": True, "control_id": control_id, **_summarize_entities(config)})
+
+
+async def _add_entity(
+    page: int, row: int, column: int, connection: str, definition_id: str, options_json: str,
+    entity_type: str, location: Any,
+) -> str:
+    options = json.loads(options_json or "{}")
+    if not isinstance(options, dict):
+        raise ValueError("options_json must be a JSON object of option id -> value.")
+    client = _client()
+    control_id = await _require_control(client, page, row, column)
+    connection_id = _resolve_connection(await _connections_map(client), connection)
+    added = await client.entity_add(control_id, location, connection_id, entity_type, definition_id)
+    entity_id = added.get("body")
+    if not added.get("ok") or not entity_id:
+        return _error(
+            f"Companion refused to add {entity_type} {definition_id!r} on {connection!r}.",
+            detail=added.get("error"),
+            hint="Check the definition id with list_entity_definitions; the connection must be enabled for its definitions to exist.",
+        )
+    option_results = {}
+    for key, value in options.items():
+        res = await client.entity_set_option(control_id, location, entity_id, key, value)
+        option_results[key] = not _write_failed(res)
+    entity = _find_entity(await _control_entities(client, control_id), entity_id)
+    stored = {k: (v.get("value") if isinstance(v, dict) else v) for k, v in ((entity or {}).get("options") or {}).items()}
+    mismatched = [k for k, v in options.items() if stored.get(k) != v]
+    return _json({
+        "ok": entity is not None and not mismatched and all(option_results.values()),
+        "control_id": control_id,
+        "entity_id": entity_id,
+        "connection_id": connection_id,
+        "definition_id": definition_id,
+        "location": location,
+        "stored_options": stored,
+        "mismatched_options": mismatched,
+    })
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def add_button_action(
+    page: int, row: int, column: int, connection: str, definition_id: str,
+    options_json: str = "{}", location: str = "down", step: str = "0",
+) -> str:
+    """Add an action to a button and set its options, then verify by re-reading the button.
+
+    connection: id or label ('internal' for Companion built-ins). location: down|up|rotate_left|rotate_right.
+    options_json: {"optionId": value, ...} — plain values, not {value,isExpression} wrappers.
+    """
+    return await _add_entity(page, row, column, connection, definition_id, options_json, "action",
+                             _entity_location(location, step))
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def add_button_feedback(
+    page: int, row: int, column: int, connection: str, definition_id: str, options_json: str = "{}",
+) -> str:
+    """Add a feedback to a button and set its options, then verify. Style overrides use Companion's defaults."""
+    return await _add_entity(page, row, column, connection, definition_id, options_json, "feedback", "feedbacks")
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def set_button_entity_option(
+    page: int, row: int, column: int, entity_id: str, key: str, value_json: str,
+    location: str = "down", step: str = "0", is_expression: bool = False,
+) -> str:
+    """Set one option on an existing action/feedback (location 'feedbacks' for feedbacks). value_json is JSON (e.g. 5, "abc", true)."""
+    client = _client()
+    control_id = await _require_control(client, page, row, column)
+    loc = _entity_location(location, step)
+    value = json.loads(value_json)
+    result = await client.entity_set_option(control_id, loc, entity_id, key, value, is_expression)
+    entity = _find_entity(await _control_entities(client, control_id), entity_id)
+    stored = ((entity or {}).get("options") or {}).get(key)
+    stored_value = stored.get("value") if isinstance(stored, dict) else stored
+    return _json({"ok": not _write_failed(result) and stored_value == value, "entity_id": entity_id, "key": key, "stored": stored_value})
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def remove_button_entity(page: int, row: int, column: int, entity_id: str, location: str = "down", step: str = "0") -> str:
+    """Remove an action/feedback from a button by entity id (location 'feedbacks' for feedbacks)."""
+    client = _client()
+    control_id = await _require_control(client, page, row, column)
+    result = await client.entity_remove(control_id, _entity_location(location, step), entity_id)
+    still_there = _find_entity(await _control_entities(client, control_id), entity_id) is not None
+    return _json({"ok": not _write_failed(result) and not still_there, "entity_id": entity_id})
+
+
+@mcp.tool()
+@_handle_errors
+async def export_page_config(page: int, save: bool = True) -> str:
+    """Export a page in Companion's native format (buttons + actions + feedbacks + connections).
+
+    save=true writes a .companionconfig file (importable via import_page_config or the Companion UI) and returns its path.
+    """
+    _validate_page(page)
+    exported = await _client().export_page_config(page)
+    if not exported.get("ok"):
+        return _error("Export failed.", detail=exported)
+    body = exported["body"]
+    out: dict[str, Any] = {"ok": True, "page": page, "name": (body.get("page") or {}).get("name"),
+                           "connections": [c.get("label") for c in (body.get("instances") or {}).values()]}
+    if save:
+        out["path"] = str(_write_page_export("export", page, body).resolve())
+    else:
+        out["config"] = body
+    return _json(out)
+
+
+def _auto_remap(
+    import_connections: dict[str, Any], existing: dict[str, dict[str, Any]], overrides: dict[str, str], allow_create: bool
+) -> dict[str, str]:
+    remap: dict[str, str] = {}
+    for src_id, info in import_connections.items():
+        if not info:
+            continue
+        if src_id in overrides:
+            remap[src_id] = overrides[src_id]
+            continue
+        same_module = [cid for cid, c in existing.items() if c.get("moduleId") == info.get("moduleId")]
+        by_label = [cid for cid in same_module if existing[cid].get("label") == info.get("label")]
+        if src_id in existing and existing[src_id].get("moduleId") == info.get("moduleId"):
+            remap[src_id] = src_id
+        elif by_label:
+            remap[src_id] = by_label[0]
+        elif same_module:
+            remap[src_id] = same_module[0]
+        else:
+            remap[src_id] = "" if allow_create else "_ignore"
+    return remap
+
+
+@mcp.tool()
+@_handle_errors
+@_require_writes_enabled
+async def import_page_config(
+    file_path: str,
+    target_page: int,
+    source_page: int = 1,
+    remap_json: str = "",
+    allow_create_connections: bool = False,
+    confirm_overwrite: bool = False,
+) -> str:
+    """Import a page from a Companion export (.companionconfig / JSON) into target_page, with full actions/feedbacks.
+
+    target_page=-1 appends a new page. Importing onto an existing page REPLACES it: requires confirm_overwrite=true and
+    a backup export of that page is written first. Connections are matched to existing ones by id, then module+label,
+    then module. Unmatched connections are ignored unless allow_create_connections=true, in which case they are created
+    DISABLED. remap_json optionally overrides: {"importConnectionId": "existingConnectionId" | "_ignore"}.
+    """
+    path = Path(file_path).expanduser()
+    if not path.is_file():
+        raise ValueError(f"File not found: {path}")
+    raw = path.read_bytes()
+    try:
+        config = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ValueError("Only JSON exports are supported (export with format=json).") from None
+    if config.get("type") not in ("page", "full"):
+        raise ValueError("File is not a Companion page/full export.")
+    if config.get("type") == "full" and str(source_page) not in (config.get("pages") or {}):
+        raise ValueError(f"source_page {source_page} not present in full export.")
+    # Never let an import switch on device traffic: created connections start disabled.
+    for inst in (config.get("instances") or {}).values():
+        if isinstance(inst, dict):
+            inst["enabled"] = False
+    data = json.dumps(config).encode("utf-8")
+
+    overrides = json.loads(remap_json) if remap_json else {}
+    if not isinstance(overrides, dict):
+        raise ValueError("remap_json must be a JSON object.")
+
+    client = _client()
+    count = await _page_count(client)
+    backup = None
+    if target_page != -1:
+        if target_page < 1 or target_page > count:
+            raise ValueError(f"target_page must be -1 or between 1 and {count}.")
+        if not confirm_overwrite:
+            raise ValueError(f"Importing replaces everything on page {target_page}; call again with confirm_overwrite=true.")
+        backup = await _backup_page(client, target_page, "before-import")
+        if not backup["ok"]:
+            return _json(backup)
+
+    existing = await _connections_map(client)
+    result = await client.import_page_config(
+        data,
+        filename=path.name,
+        source_page=source_page,
+        target_page=target_page,
+        remap_fn=lambda conns: _auto_remap(conns, existing, overrides, allow_create_connections),
+    )
+    after = await _connections_map(client)
+    created = [{"id": cid, "label": c.get("label"), "enabled": c.get("enabled")} for cid, c in after.items() if cid not in existing]
+    return _json({
+        **result,
+        "target_page": target_page if target_page != -1 else count + 1,
+        "backup": backup["path"] if backup else None,
+        "connections_created": created,
+        "ignored_connections": [k for k, v in (result.get("remap_requested") or {}).items() if v == "_ignore"],
+    })
+
+
+# ============================================================
 # Legacy Support
 # ============================================================
 
